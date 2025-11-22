@@ -303,10 +303,6 @@ PROMPT_VERIFY_DESIGN = """
 }
 """
 
-
-
-
-
 # --- 파일 처리 함수들 ---
 
 def process_file_to_part(file_storage):
@@ -575,109 +571,6 @@ def download_standard_excel():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
-# 엑셀 파일에서 기준 데이터 읽기
-@app.route('/api/verify-design', methods=['POST'])
-def verify_design():
-    print("🕵️‍♂️ 2단계: 디자인 검증 시작...")
-
-    try:
-        # 1. 파일 받기
-        design_file = request.files.get('design_file')
-        standard_excel = request.files.get('standard_excel')
-        standard_json = request.form.get('standard_data')
-
-        if not design_file:
-            return jsonify({"error": "디자인 파일이 필요합니다."}), 400
-
-        # 2. 기준 데이터 로딩 (엑셀 -> JSON)
-        if standard_excel:
-            try:
-                df_dict = pd.read_excel(
-                    io.BytesIO(standard_excel.read()),
-                    sheet_name=None,
-                    engine='openpyxl'
-                )
-                first_sheet_name = list(df_dict.keys())[0]
-                first_sheet_df = df_dict[first_sheet_name]
-
-                standard_data = {}
-                if not first_sheet_df.empty:
-                    col = first_sheet_df.columns[0]
-                    if '원재료명' in first_sheet_df.columns:
-                        col = '원재료명'
-
-                    ingredients_list = first_sheet_df[col].dropna().astype(str).tolist()
-                    standard_data = {
-                        'ingredients': {
-                            'structured_list': ingredients_list,
-                            'continuous_text': ', '.join(ingredients_list)
-                        }
-                    }
-
-                standard_json = json.dumps(standard_data, ensure_ascii=False)
-            except Exception as e:
-                print(f"❌ 엑셀 읽기 실패: {e}")
-                return jsonify({"error": f"엑셀 읽기 실패: {str(e)}"}), 400
-
-        # 3. 법령 파일 읽기
-        law_text = ""
-        try:
-            for f in glob.glob('law_text_*.txt'):
-                with open(f, 'r', encoding='utf-8') as file:
-                    law_text += file.read() + "\n"
-            try:
-                with open('law_context.txt', 'r', encoding='utf-8') as f:
-                    law_text = f.read() + "\n" + law_text
-            except FileNotFoundError:
-                print("⚠️ law_context.txt 없음 - 무시하고 진행")
-        except Exception as e:
-            print(f"⚠️ 법령 파일 읽기 오류: {e}")
-
-        # 4. AI 프롬프트 조립
-        prompt_text = f"""
-{PROMPT_VERIFY_DESIGN}
-
-[참고 법령]
-{law_text[:60000]}
-
-[기준 데이터]
-{standard_json}
-"""
-
-        parts = [prompt_text, process_file_to_part(design_file)]
-
-        # 5. 모델 호출
-        if not GOOGLE_API_KEY:
-            return jsonify({"error": "GOOGLE_API_KEY가 설정되지 않았습니다."}), 500
-
-        model = genai.GenerativeModel(
-            MODEL_NAME,
-            generation_config={"temperature": 0.0}
-        )
-
-        response = model.generate_content(parts)
-        result_text = response.text.strip()
-
-        # JSON만 추출
-        json_match = re.search(r"(\{.*\})", result_text, re.DOTALL)
-        if json_match:
-            clean_json = json_match.group(1)
-            clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
-            return jsonify(json.loads(clean_json))
-        else:
-            return jsonify({
-                "error": "AI 응답에서 JSON을 찾지 못했습니다.",
-                "raw": result_text[:500]
-            }), 500
-
-    except Exception as e:
-        # 최종 안전망
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            "error": "서버 내부 오류가 발생했습니다.",
-            "detail": str(e)
-        }), 500
 
 # 2단계: 검증하기 (엑셀 파일 또는 JSON + 디자인 이미지)
 @app.route('/api/verify-design', methods=['POST'])
