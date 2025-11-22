@@ -1,5 +1,4 @@
 streamlit
-pandas
-Pillow
-python-dotenv
-google-generativeai
+supabase
+requests
+pillow
