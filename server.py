@@ -573,6 +573,7 @@ def download_standard_excel():
 
 
 # 2단계: 검증하기 (엑셀 파일 또는 JSON + 디자인 이미지)
+# 2단계: 검증하기 (엑셀 파일 또는 JSON + 디자인 이미지)
 @app.route('/api/verify-design', methods=['POST'])
 def verify_design():
     print("🕵️‍♂️ 2단계: 디자인 검증 시작...")
@@ -590,17 +591,17 @@ def verify_design():
 
         # -----------------------------
         # 2. 기준 데이터 로딩 (엑셀 -> JSON)
+        #    - sheet_name=None 대신 첫 번째 시트만 읽어서 메모리 절약
         # -----------------------------
         if standard_excel:
             try:
-                df_dict = pd.read_excel(
+                df = pd.read_excel(
                     io.BytesIO(standard_excel.read()),
-                    sheet_name=None,
+                    sheet_name=0,          # ✅ 첫 번째 시트만
                     engine='openpyxl'
                 )
 
-                first_sheet_name = list(df_dict.keys())[0]
-                first_sheet_df = df_dict[first_sheet_name]
+                first_sheet_df = df
 
                 standard_data = {}
                 if not first_sheet_df.empty:
@@ -627,8 +628,11 @@ def verify_design():
                     ensure_ascii=False
                 )
 
+                # ✅ 프롬프트에 넣을 기준 JSON 길이도 제한 (너무 길면 잘라냄)
+                if standard_json and len(standard_json) > 8000:
+                    standard_json = standard_json[:8000] + "...(생략)"
+
             except Exception as e:
-                # 엑셀 읽기 실패해도 명확한 에러 메시지 주기
                 print("❌ 엑셀 읽기 실패:", e)
                 return jsonify({
                     "error": f"엑셀 파일을 읽는 중 오류가 발생했습니다: {str(e)}"
@@ -636,24 +640,13 @@ def verify_design():
 
         # -----------------------------
         # 3. 법령 텍스트 읽기
+        #    - 이미 글로벌로 로드한 ALL_LAW_TEXT 재사용
+        #    - 너무 길면 앞부분만 사용해서 메모리, 토큰 둘 다 절약
         # -----------------------------
-        law_text = ""
-        # law_text_*.txt 파일들
-        for fpath in glob.glob('law_text_*.txt'):
-            try:
-                with open(fpath, 'r', encoding='utf-8') as f:
-                    law_text += f.read() + "\n"
-            except Exception as e:
-                print(f"⚠️ 법령 파일 읽기 실패 ({fpath}):", e)
-
-        # law_context.txt (있으면 사용, 없으면 그냥 넘어감)
-        try:
-            with open('law_context.txt', 'r', encoding='utf-8') as f:
-                law_text = f.read() + "\n" + law_text
-        except FileNotFoundError:
-            print("⚠️ law_context.txt 파일이 없습니다. (무시하고 진행)")
-        except Exception as e:
-            print("⚠️ law_context.txt 읽기 실패:", e)
+        law_text = ALL_LAW_TEXT or ""
+        MAX_LAW_CHARS = 20000   # 필요하면 더 줄여도 됨 (예: 15000)
+        if len(law_text) > MAX_LAW_CHARS:
+            law_text = law_text[:MAX_LAW_CHARS] + "\n...(이하 생략)"
 
         # -----------------------------
         # 4. 프롬프트 조합
@@ -662,7 +655,7 @@ def verify_design():
         {PROMPT_VERIFY_DESIGN}
 
         [참고 법령]
-        {law_text[:60000]}
+        {law_text}
 
         [기준 데이터(JSON)]
         {standard_json}
@@ -712,6 +705,14 @@ def verify_design():
             return jsonify({
                 "error": f"AI 분석 중 오류가 발생했습니다: {str(e)}"
             }), 500
+
+    except Exception as e:
+        # 위에서 예상 못 한 모든 예외는 여기로
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "error": f"서버 내부 오류가 발생했습니다: {str(e)}"
+        }), 500
 
     except Exception as e:
         # 위에서 예상 못 한 모든 예외는 여기로
