@@ -137,7 +137,7 @@ def show_main_app():
 
     # 3. 오류 자동체크
     elif menu == "오류 자동체크":
-        st.title("🔍 오류 자동체크 (기준 데이터 vs 디자인 검증)")
+        st.title("🔍 오류 자동체크 ")
 
         standard_excel = st.file_uploader(
             "📘 기준데이터 (Excel / PDF)", type=["xlsx", "xls", "pdf"]
