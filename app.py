@@ -35,35 +35,45 @@ if "user" not in st.session_state:
 
 
 def show_login_page():
-    """로그인 화면"""
-    st.title("🔐 바른식품표시 로그인")
+    st.title("🔒 바른식품표시 로그인")
 
-    with st.form("login_form"):
-        email = st.text_input("이메일")
-        password = st.text_input("비밀번호", type="password")
-        submitted = st.form_submit_button("로그인")
+    email = st.text_input("이메일", key="login_email")
+    password = st.text_input("비밀번호", type="password", key="login_password")
 
-    if submitted:
+    if st.button("로그인"):
+        # 1) 입력값 체크
         if not email or not password:
-            st.error("이메일과 비밀번호를 모두 입력해주세요.")
+            st.error("이메일과 비밀번호를 모두 입력해 주세요.")
             return
 
         try:
-            result = supabase.auth.sign_in_with_password(
+            # 2) Supabase 로그인 시도
+            res = supabase.auth.sign_in_with_password(
                 {"email": email, "password": password}
             )
-            # 로그인 성공 시
+
+            # 새 supabase-py 기준: res.user 가 None 이 아니면 성공
+            user = getattr(res, "user", None)
+
+            if user is None:
+                # 로그인 실패일 때만 에러 메시지
+                st.error("로그인 실패: 이메일/비밀번호를 확인해 주세요.")
+                return
+
+            # 3) 로그인 성공 처리
             st.session_state["user"] = {
-                "email": result.user.email,
-                "id": result.user.id,
+                "id": user.id,
+                "email": user.email,
             }
+
             st.success("로그인 성공! 잠시 후 대시보드로 이동합니다.")
-            st.experimental_rerun()
+            st.experimental_rerun()  # 성공했으면 바로 대시보드로 이동
 
         except Exception as e:
-            st.error("로그인 실패: 이메일/비밀번호를 확인해주세요.")
-            # 디버깅용
-            # st.write(e)
+            # 예외(잘못된 비번, 네트워크 문제 등) 발생 시
+            st.error("로그인 실패: 이메일/비밀번호를 확인해 주세요.")
+            # 디버그용 로그
+            print("Supabase login error:", e)
 
 
 def show_top_bar():
