@@ -1,12 +1,5 @@
 import streamlit as st
 import json
-from label_functions import (
-    process_file_to_part,
-    extract_ingredient_info,
-    create_standard,
-    verify_design,
-    ALL_LAW_TEXT,
-)
 from label_functions import MODEL_NAME
 
 from label_functions import *
