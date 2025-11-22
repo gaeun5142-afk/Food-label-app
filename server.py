@@ -649,93 +649,149 @@ def read_standard_excel():
 def verify_design():
     print("🕵️‍♂️ 2단계: 디자인 검증 시작...")
 
-    # 1. 파일 받기
-    design_file = request.files.get('design_file')
-    standard_excel = request.files.get('standard_excel')
-    standard_json = request.form.get('standard_data')
+    try:
+        # -----------------------------
+        # 1. 파일 받기
+        # -----------------------------
+        design_file = request.files.get('design_file')
+        standard_excel = request.files.get('standard_excel')
+        standard_json = request.form.get('standard_data')
 
-    if not design_file:
-        return jsonify({"error": "디자인 파일이 필요합니다."}), 400
+        if not design_file:
+            return jsonify({"error": "디자인 파일이 필요합니다. (design_file)"}), 400
 
-    # 2. 기준 데이터 로딩 (엑셀 -> JSON)
-    if standard_excel:
+        # -----------------------------
+        # 2. 기준 데이터 로딩 (엑셀 -> JSON)
+        # -----------------------------
+        if standard_excel:
+            try:
+                df_dict = pd.read_excel(
+                    io.BytesIO(standard_excel.read()),
+                    sheet_name=None,
+                    engine='openpyxl'
+                )
+
+                first_sheet_name = list(df_dict.keys())[0]
+                first_sheet_df = df_dict[first_sheet_name]
+
+                standard_data = {}
+                if not first_sheet_df.empty:
+                    col = first_sheet_df.columns[0]
+                    if '원재료명' in first_sheet_df.columns:
+                        col = '원재료명'
+
+                    ingredients_list = (
+                        first_sheet_df[col]
+                        .dropna()
+                        .astype(str)
+                        .tolist()
+                    )
+
+                    standard_data = {
+                        'ingredients': {
+                            'structured_list': ingredients_list,
+                            'continuous_text': ', '.join(ingredients_list)
+                        }
+                    }
+
+                standard_json = json.dumps(
+                    standard_data,
+                    ensure_ascii=False
+                )
+
+            except Exception as e:
+                # 엑셀 읽기 실패해도 명확한 에러 메시지 주기
+                print("❌ 엑셀 읽기 실패:", e)
+                return jsonify({
+                    "error": f"엑셀 파일을 읽는 중 오류가 발생했습니다: {str(e)}"
+                }), 400
+
+        # -----------------------------
+        # 3. 법령 텍스트 읽기
+        # -----------------------------
+        law_text = ""
+        # law_text_*.txt 파일들
+        for fpath in glob.glob('law_text_*.txt'):
+            try:
+                with open(fpath, 'r', encoding='utf-8') as f:
+                    law_text += f.read() + "\n"
+            except Exception as e:
+                print(f"⚠️ 법령 파일 읽기 실패 ({fpath}):", e)
+
+        # law_context.txt (있으면 사용, 없으면 그냥 넘어감)
         try:
-            df_dict = pd.read_excel(io.BytesIO(standard_excel.read()), sheet_name=None, engine='openpyxl')
-            first_sheet_name = list(df_dict.keys())[0]
-            first_sheet_df = df_dict[first_sheet_name]
-
-            standard_data = {}
-            if not first_sheet_df.empty:
-                # 원재료명 컬럼 찾기 (단순화)
-                col = first_sheet_df.columns[0]
-                if '원재료명' in first_sheet_df.columns: col = '원재료명'
-
-                ingredients_list = first_sheet_df[col].dropna().astype(str).tolist()
-                standard_data = {'ingredients': {'structured_list': ingredients_list,
-                                                 'continuous_text': ', '.join(ingredients_list)}}
-
-            standard_json = json.dumps(standard_data, ensure_ascii=False)
+            with open('law_context.txt', 'r', encoding='utf-8') as f:
+                law_text = f.read() + "\n" + law_text
+        except FileNotFoundError:
+            print("⚠️ law_context.txt 파일이 없습니다. (무시하고 진행)")
         except Exception as e:
-            return jsonify({"error": f"엑셀 읽기 실패: {str(e)}"}), 400
+            print("⚠️ law_context.txt 읽기 실패:", e)
 
-    # 3. 법령 파일 읽기
-    law_text = ""
-    for f in glob.glob('law_text_*.txt'):
-        try:
-            with open(f, 'r', encoding='utf-8') as file:
-                law_text += file.read() + "\n"
-        except:
-            pass
-    try:
-        with open('law_context.txt', 'r', encoding='utf-8') as f:
-            law_text = f.read() + "\n" + law_text
-    except:
-        pass
+        # -----------------------------
+        # 4. 프롬프트 조합
+        # -----------------------------
+        full_prompt = f"""
+        {PROMPT_VERIFY_DESIGN}
 
-    # 4. AI 프롬프트 조립
-    parts = [f"""
-    {PROMPT_VERIFY_DESIGN}
+        [참고 법령]
+        {law_text[:60000]}
 
-    [참고 법령]
-    {law_text[:60000]}
+        [기준 데이터(JSON)]
+        {standard_json}
+        """
 
-    [기준 데이터]
-    {standard_json}
-    """]
+        parts = [full_prompt]
 
-    if design_file:
-        parts.append(process_file_to_part(design_file))
-
-    # 5. AI 호출 및 결과 처리 (여기가 중요)
-    try:
-        # 창의성 0.0 설정 (정규성 확보)
-        model = genai.GenerativeModel(
-            MODEL_NAME,
-            generation_config={"temperature": 0.0}
-        )
-
-        response = model.generate_content(parts)
-        result_text = response.text.strip()
-
-        # [강력한 JSON 파싱 로직] 정규표현식으로 JSON만 추출
-        json_match = re.search(r"(\{.*\})", result_text, re.DOTALL)
-
-        if json_match:
-            clean_json = json_match.group(1)
-            # 간단한 쉼표 보정
-            clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
-            return jsonify(json.loads(clean_json))
+        # 디자인 파일을 Gemini가 이해할 수 있는 Part로 변환
+        design_file.stream.seek(0)
+        design_part = process_file_to_part(design_file)
+        if design_part:
+            parts.append(design_part)
         else:
-            # JSON 패턴 못 찾으면 원본에서 시도 (혹시 모르니)
-            clean_json = result_text.replace("``````", "").strip()
-            return jsonify(json.loads(clean_json))
+            return jsonify({"error": "디자인 파일을 처리할 수 없습니다."}), 400
+
+        # -----------------------------
+        # 5. Gemini 호출
+        # -----------------------------
+        if not GOOGLE_API_KEY:
+            return jsonify({
+                "error": "GOOGLE_API_KEY 환경변수가 설정되어 있지 않습니다."
+            }), 500
+
+        try:
+            model = genai.GenerativeModel(
+                MODEL_NAME,
+                generation_config={"temperature": 0.0}
+            )
+            response = model.generate_content(parts)
+            result_text = response.text.strip()
+
+            # JSON 추출
+            json_match = re.search(r"(\{.*\})", result_text, re.DOTALL)
+            if json_match:
+                clean_json = json_match.group(1)
+                clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
+                return jsonify(json.loads(clean_json))
+            else:
+                # JSON 패턴이 없으면 그냥 파싱 시도
+                clean_json = result_text.replace("```", "").strip()
+                return jsonify(json.loads(clean_json))
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print("❌ Gemini 호출/파싱 중 오류:", e)
+            return jsonify({
+                "error": f"AI 분석 중 오류가 발생했습니다: {str(e)}"
+            }), 500
 
     except Exception as e:
-        print(f"❌ 검증 오류: {e}")
-        # 상세 에러 로그 출력
+        # 위에서 예상 못 한 모든 예외는 여기로
         import traceback
         traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        return jsonify({
+            "error": f"서버 내부 오류가 발생했습니다: {str(e)}"
+        }), 500
 
 
 # QA 자료 업로드 및 식품표시사항 작성 API
