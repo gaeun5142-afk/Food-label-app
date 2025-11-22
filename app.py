@@ -6,12 +6,12 @@ SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_ANON_KEY = st.secrets["SUPABASE_ANON_KEY"]
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
-st.set_page_config(page_title="식품표시 웹앱", layout="centered")
+st.set_page_config(page_title="식품표시사항 자동화 플랫폼", layout="centered")
 
 
 # ---------------------- 로그인 페이지 ----------------------
 def login_page():
-    st.title("식품표시 웹앱")
+    st.title("식품표시사항 자동화 플랫폼")
     st.subheader("로그인")
 
     with st.form("login_form"):
