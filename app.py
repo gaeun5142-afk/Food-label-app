@@ -1,9 +1,9 @@
 import streamlit as st
 import json
-from label_functions import MODEL_NAME
+from server import MODEL_NAME
 
-from label_functions import *
-from label_functions import load_law_texts
+from server import *
+from server import load_law_texts
 
 # ------------------------------
 # 🔵 Streamlit 페이지 설정
