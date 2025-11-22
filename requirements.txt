@@ -1,12 +1,10 @@
-streamlit
-supabase
-requests
-pillow
-gunicorn
 flask
 flask_cors
 google-generativeai
 python-dotenv
+Pillow
 waitress
 openpyxl
 pandas
+gunicorn
+requests
