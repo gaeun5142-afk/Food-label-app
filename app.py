@@ -464,19 +464,22 @@ def show_main_app():
     # 4. 식품 관련 사이트
     # -----------------------------
     elif menu == "식품 관련 사이트":
-        st.title("🔗 식품 관련 사이트 모음")
+    st.title("🔗 식품 관련 사이트 모음")
 
-        st.markdown("""
-        ### 📌 유용한 링크
-        - **식약처 식품안전나라**  
-          https://www.foodsafetykorea.go.kr  
+    st.markdown("""
+    ### 📌 유용한 링크
+    - **식약처 식품안전나라**  
+      https://www.foodsafetykorea.go.kr  
 
-        - **식품 영양성분 DB**  
-          https://koreanfood.rda.go.kr/kfi/fct/fctList  
+    - **식품 표시 기준 고시**  
+      https://www.foodsafetykorea.go.kr/foodcode/04_03.jsp  
 
-        - **부정불량식품 신고센터 (1399)**  
-          https://www.mfds.go.kr
-        """)
+    - **식품 영양성분 DB**  
+      https://koreanfood.rda.go.kr/kfi/fct/fctList  
+
+    - **부정불량식품 신고센터 (1399)**  
+      https://www.mfds.go.kr
+    """)
 
 
 # -----------------------------
