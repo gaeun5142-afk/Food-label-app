@@ -6,7 +6,7 @@ import io
 # -----------------------------
 # Flask 서버 주소 적기 (중요)
 # -----------------------------
-FLASK_API_URL = "https://YOUR-FLASK-SERVER-URL"  
+FLASK_API_URL = "https://food-label-backend.onrender.com"
 # 예: "https://foodchecker-backend.onrender.com"
 
 st.set_page_config(
