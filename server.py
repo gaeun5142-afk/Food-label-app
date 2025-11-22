@@ -432,7 +432,7 @@ def create_standard_excel(data):
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return "Food Label API is running"
 
 
 # 1단계: 정답지 만들기 (엑셀 + 원재료 사진들 몽땅)
