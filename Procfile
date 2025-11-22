@@ -1,0 +1,1 @@
+web: waitress --host=0.0.0.0 --port=$PORT server_v3:app
