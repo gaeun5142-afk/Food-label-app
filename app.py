@@ -471,9 +471,6 @@ def show_main_app():
         - **식약처 식품안전나라**  
           https://www.foodsafetykorea.go.kr  
 
-        - **식품 표시 기준 고시**  
-          https://www.foodsafetykorea.go.kr/foodcode/04_03.jsp  
-
         - **식품 영양성분 DB**  
           https://koreanfood.rda.go.kr/kfi/fct/fctList  
 
