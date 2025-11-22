@@ -6,12 +6,13 @@ SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_ANON_KEY = st.secrets["SUPABASE_ANON_KEY"]
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
-st.set_page_config(page_title="식품표시사항 자동화 플랫폼", layout="centered")
+# 앱 이름을 바른식품표시로 변경
+st.set_page_config(page_title="바른식품표시", layout="centered")
 
 
 # ---------------------- 로그인 페이지 ----------------------
 def login_page():
-    st.title("식품표시사항 자동화 플랫폼")
+    st.title("바른식품표시")
     st.subheader("로그인")
 
     with st.form("login_form"):
@@ -48,7 +49,7 @@ def main_app():
     user = st.session_state["user"]
     email = user["email"]
 
-    st.title("식품표시 웹앱")
+    st.title("바른식품표시")
     st.caption(f"현재 로그인: {email}")
 
     # 로그아웃 버튼 (모든 탭 공통)
@@ -58,21 +59,25 @@ def main_app():
 
     st.markdown("---")
 
-    tab_home, tab_auto, tab_error = st.tabs(["🏠 홈", "🔁 자동 변환", "⚠ 오류 자동체크"])
+    # 탭: 홈 / 자동 변환 / 오류 자동체크 / 식품 관련 사이트
+    tab_home, tab_auto, tab_error, tab_links = st.tabs(
+        ["🏠 홈", "🔁 자동 변환", "⚠ 오류 자동체크", "🔗 식품 관련 사이트"]
+    )
 
     # -------- 홈 탭 --------
     with tab_home:
         st.subheader("홈")
         st.write(
             """
-            이 웹앱은 **식품 표시 라벨**을 가지고  
-            - 자동 변환(분류/정리)  
-            - 오류 자동 체크  
+            **바른식품표시**는 식품 라벨 이미지를 기반으로
 
-            를 할 수 있도록 만들고 있는 **초기 버전**입니다.
+            - 자동 변환(분류/정리)
+            - 오류 자동 체크
+            - 관련 공공 사이트/자료로 바로 연결
 
-            현재 화면에서는 이미지 업로드와 결과 확인 흐름만 만들었고,  
-            실제 분석 로직(OCR, 기준 검증 등)은 나중에 추가할 예정입니다.
+            을 목표로 하는 웹앱입니다.  
+            지금은 구조만 만들어 둔 **프로토타입** 단계이고,
+            앞으로 실제 법령·가이드라인을 기반으로 기능을 확장할 수 있습니다.
             """
         )
 
@@ -81,7 +86,9 @@ def main_app():
         st.subheader("자동 변환")
 
         auto_image = st.file_uploader(
-            "자동 변환할 라벨/포장 이미지 업로드", type=["png", "jpg", "jpeg"], key="auto_image"
+            "자동 변환할 라벨/포장 이미지 업로드",
+            type=["png", "jpg", "jpeg"],
+            key="auto_image",
         )
 
         if st.button("결과 확인하기", key="auto_check_btn"):
@@ -92,19 +99,19 @@ def main_app():
                 st.markdown("**1) 업로드한 이미지 미리보기**")
                 st.image(auto_image, use_column_width=True)
 
-                # 👉 여기 부분에 나중에 실제 자동 변환 로직(OCR, 카테고리 분류 등) 연결
+                # 👉 나중에 실제 OCR/분류 로직을 여기에 연결
                 st.markdown("---")
                 st.markdown("**2) 변환된 내용 (데모)**")
                 st.write(
                     """
                     - 예시) 카테고리: 과자류  
-                    - 예시) 브랜드/제품명: (이미지에서 인식 예정)  
+                    - 예시) 제품명/브랜드: (이미지에서 인식 예정)  
                     - 예시) 내용량, 원재료명, 알레르기 등은  
-                      나중에 OCR 결과를 기반으로 자동 채워질 예정입니다.
+                      추후 자동 추출 기능을 통해 채워질 예정입니다.
                     """
                 )
         else:
-            st.info("이미지를 업로드한 후 **결과 확인하기** 버튼을 눌러주세요.")
+            st.info("이미지를 업로드한 뒤 **결과 확인하기** 버튼을 눌러주세요.")
 
     # -------- 오류 자동체크 탭 --------
     with tab_error:
@@ -124,21 +131,46 @@ def main_app():
                 st.markdown("**1) 업로드한 이미지 미리보기**")
                 st.image(error_image, use_column_width=True)
 
-                # 👉 여기 부분에 나중에 실제 규정 위반 체크 로직을 붙이면 됨
+                # 👉 나중에 실제 규정 위반 체크 로직을 붙이면 됨
                 st.markdown("---")
                 st.markdown("**2) 자동 체크 결과 (데모)**")
                 st.write(
                     """
-                    - 예시) 필수 항목 누락 여부: (나중에 실제 규칙으로 체크)  
-                    - 예시) 알레르기 표시 누락 여부: (예: 우유, 대두, 땅콩 등)  
-                    - 예시) 유통기한/보관방법 표기 여부: (라벨에서 인식 예정)  
+                    - 예시) 필수 표시항목 누락 여부  
+                    - 예시) 알레르기 표시 누락 여부 (우유, 대두, 땅콩 등)  
+                    - 예시) 유통기한·보관방법 표기 여부  
 
-                    현재는 구조만 만들어 둔 상태이며,  
-                    나중에 실제 법적 기준/규정을 연결해 자동으로 체크하도록 확장할 수 있습니다.
+                    현재는 참고용 설명만 보여주고 있으며,
+                    실제 법적 기준 검토는 별도로 필요합니다.
                     """
                 )
         else:
-            st.info("이미지를 업로드한 후 **결과 확인하기** 버튼을 눌러주세요.")
+            st.info("이미지를 업로드한 뒤 **결과 확인하기** 버튼을 눌러주세요.")
+
+    # -------- 식품 관련 사이트 탭 --------
+    with tab_links:
+        st.subheader("식품 관련 사이트 모음")
+
+        st.write("식품 표시·안전 관련해서 자주 참고하는 사이트들을 모아두는 공간입니다.")
+
+        st.markdown("### 🏛 공공/기관 사이트")
+        st.markdown(
+            """
+- 식품의약품안전처(MFDS):  
+  - 홈페이지: https://www.mfds.go.kr  
+  - **식품안전나라**: https://www.foodsafetykorea.go.kr  
+- 국가법령정보센터(식품 관련 법령 검색):  
+  - https://www.law.go.kr
+            """
+        )
+
+        st.markdown("### 📚 가이드·자료 (나중에 링크 추가 가능)")
+        st.write(
+            "- 식품 표시 기준 요약 자료\n"
+            "- 알레르기 표시 의무 품목 안내\n"
+            "- 영양성분 표시 가이드\n"
+            "\n(필요한 자료 링크를 천천히 더 추가하면 돼요.)"
+        )
 
 
 # ---------------------- 실행 진입점 ----------------------
@@ -146,6 +178,7 @@ if "user" not in st.session_state:
     login_page()
 else:
     main_app()
+
 
 
 
