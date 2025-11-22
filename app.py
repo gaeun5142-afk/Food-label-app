@@ -5,7 +5,7 @@ from supabase import create_client, Client
 # 🔑 Streamlit Secrets 에 아래 두 개가 들어있다고 가정:
 # SUPABASE_URL, SUPABASE_ANON_KEY
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_ANON_KEY = st.secrets["SUPABASE_ANON_KEY"]
+SUPABASE_ANON_KEY = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 # ---------------------- 페이지 설정 ---------------------- #
