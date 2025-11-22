@@ -15,6 +15,24 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
+# -----------------------------
+# 모든 예외를 JSON으로 돌려주는 전역 에러 핸들러
+# -----------------------------
+@app.errorhandler(Exception)
+def handle_all_errors(e):
+    import traceback
+    traceback.print_exc()  # Render 로그에 스택트레이스 출력
+
+    # Flask/Werkzeug가 감싼 예외인 경우 원본 꺼내기
+    original = getattr(e, "original_exception", None)
+    if original is not None:
+        msg = f"{original.__class__.__name__}: {original}"
+    else:
+        msg = f"{e.__class__.__name__}: {e}"
+
+    # 항상 JSON으로 반환
+    return jsonify({"error": msg}), 500
+
 # API 키 설정
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 if not GOOGLE_API_KEY:
