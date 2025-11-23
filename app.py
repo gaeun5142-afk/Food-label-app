@@ -34,38 +34,40 @@ if "user" not in st.session_state:
 if "login_error" not in st.session_state:
     st.session_state["login_error"] = None
 
+
 def show_login_page():
-    st.title("🔐 바른식품표시 로그인")
-    
+    # 🔒 원래 쓰던 자물쇠 이모지로 변경
+    st.title("🔒 바른식품표시 로그인")
+
     # 이전 에러 메시지 표시 (한 번만)
     if st.session_state["login_error"]:
         st.error(st.session_state["login_error"])
         st.session_state["login_error"] = None  # 표시 후 초기화
-    
+
     email = st.text_input("이메일", key="login_email")
     password = st.text_input("비밀번호", type="password", key="login_password")
-    
+
     # 버튼 눌렀을 때만 처리
     if st.button("로그인"):
         if not email or not password:
             st.session_state["login_error"] = "이메일과 비밀번호를 모두 입력해 주세요."
             st.rerun()
             return
-        
+
         try:
             # Supabase 로그인
             res = supabase.auth.sign_in_with_password(
                 {"email": email, "password": password}
             )
-            
+
             user = getattr(res, "user", None)
-            
+
             # 로그인 실패 처리
             if user is None:
                 st.session_state["login_error"] = "로그인 실패: 이메일/비밀번호를 확인해 주세요."
                 st.rerun()
                 return
-            
+
             # 로그인 성공 처리 (메시지 없이 바로 리다이렉트)
             st.session_state["user"] = {
                 "id": user.id,
@@ -73,12 +75,13 @@ def show_login_page():
             }
             st.session_state["login_error"] = None  # 에러 초기화
             st.rerun()
-            
+
         except Exception as e:
             # Supabase 내부 오류 또는 비번 불일치
             st.session_state["login_error"] = "로그인 실패: 이메일/비밀번호를 확인해 주세요."
             print("로그인 오류:", e)
             st.rerun()
+
 
 def show_top_bar():
     """상단에 사용자 정보 + 로그아웃 버튼"""
@@ -93,18 +96,19 @@ def show_top_bar():
             st.session_state["login_error"] = None
             st.rerun()
 
+
 # -----------------------------
 # 메인 콘텐츠 (로그인 후)
 # -----------------------------
 def show_main_app():
     show_top_bar()
-    
+
     # 사이드바 메뉴
     menu = st.sidebar.radio(
         "메뉴 선택",
         ["홈", "자동 변환", "오류 자동체크", "식품 관련 사이트"],
     )
-    
+
     # 1. 홈
     if menu == "홈":
         st.title("🏠 바른식품표시 플랫폼")
@@ -114,7 +118,7 @@ def show_main_app():
             **디자인과 기준데이터를 비교해 오류를 자동으로 검출**하는 플랫폼입니다.
             """
         )
-    
+
     # 2. 자동 변환 (QA → 자동 라벨)
     elif menu == "자동 변환":
         st.title("📄 자동 변환 (QA 기반 표시사항 생성)")
@@ -123,7 +127,7 @@ def show_main_app():
             type=["pdf", "jpg", "jpeg", "png", "xlsx", "xls"],
             accept_multiple_files=True,
         )
-        
+
         if st.button("결과 확인하기"):
             if not uploaded_files:
                 st.error("파일을 업로드하세요.")
@@ -148,7 +152,7 @@ def show_main_app():
                             st.error("서버에서 오류가 발생했습니다.")
                             st.write("상태 코드:", response.status_code)
                             st.write(response.text)
-    
+
     # 3. 오류 자동체크
     elif menu == "오류 자동체크":
         st.title("🔍 오류 자동체크 ")
@@ -159,7 +163,7 @@ def show_main_app():
             "🖼️ 디자인 파일 (PDF / 이미지)",
             type=["pdf", "jpg", "jpeg", "png"],
         )
-        
+
         if st.button("결과 확인하기"):
             if not design_file:
                 st.error("디자인 파일을 업로드하세요.")
@@ -177,7 +181,7 @@ def show_main_app():
                         standard_excel.read(),
                         standard_excel.type,
                     )
-                
+
                 with st.spinner("디자인과 기준 데이터를 비교 중입니다..."):
                     try:
                         response = requests.post(
@@ -191,6 +195,10 @@ def show_main_app():
                         if response.status_code == 200:
                             st.success("검사 완료!")
                             result = response.json()
+
+                            # -----------------------
+                            # 1) 총점 및 법규 준수 여부
+                            # -----------------------
                             st.subheader("📌 총점 및 법규 준수 여부")
                             score = result.get("score", "N/A")
                             law = result.get("law_compliance", {})
@@ -200,7 +208,10 @@ def show_main_app():
                                 st.write("**위반 사항:**")
                                 for v in law["violations"]:
                                     st.write("-", v)
-                            
+
+                            # -----------------------
+                            # 2) 상세 이슈 목록
+                            # -----------------------
                             st.subheader("📌 상세 이슈 목록")
                             issues = result.get("issues", [])
                             if not issues:
@@ -215,11 +226,31 @@ def show_main_app():
                                     st.write("디자인 실제값:", issue.get("actual"))
                                     st.write("수정 제안:", issue.get("suggestion"))
                                     st.markdown("---")
+
+                            # -----------------------
+                            # 3) AI 정밀 분석 결과 (하이라이트)
+                            #    server.py에서
+                            #    result["design_ocr_highlighted_html"]
+                            #    를 추가해 줬다는 가정
+                            # -----------------------
+                            highlight_html = result.get("design_ocr_highlighted_html")
+                            if highlight_html:
+                                st.subheader("🔎 AI 정밀 분석 결과 (하이라이트)")
+                                st.markdown(
+                                    """
+                                    <div style="font-size:13px; color:#555; margin-bottom:8px;">
+                                      * 붉은색으로 표시된 부분은 기준 정보와 다르거나 오타가 의심되는 곳입니다.
+                                    </div>
+                                    """,
+                                    unsafe_allow_html=True,
+                                )
+                                st.markdown(highlight_html, unsafe_allow_html=True)
+
                         else:
                             st.error("서버에서 오류가 발생했습니다.")
                             st.write("상태 코드:", response.status_code)
                             st.write(response.text)
-    
+
     # 4. 식품 관련 사이트
     elif menu == "식품 관련 사이트":
         st.title("🔗 식품 관련 사이트 모음")
@@ -237,6 +268,7 @@ def show_main_app():
             """
         )
 
+
 # -----------------------------
 # 앱 진입점
 # -----------------------------
@@ -246,6 +278,7 @@ def main():
         show_login_page()
     else:
         show_main_app()
+
 
 if __name__ == "__main__":
     main()
