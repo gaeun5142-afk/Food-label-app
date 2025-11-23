@@ -36,7 +36,7 @@ if "login_error" not in st.session_state:
 
 
 def show_login_page():
-    # 🔒 원래 쓰던 자물쇠 이모지로 변경
+    # 🔒 원래 쓰던 자물쇠 이모지
     st.title("🔒 바른식품표시 로그인")
 
     # 이전 에러 메시지 표시 (한 번만)
@@ -193,11 +193,51 @@ def show_main_app():
                         st.error(f"서버 연결 오류: {e}")
                     else:
                         if response.status_code == 200:
-                            st.success("검사 완료!")
                             result = response.json()
+                            st.success("검사 완료!")
 
                             # -----------------------
-                            # 1) 총점 및 법규 준수 여부
+                            # 1) OCR 전체 텍스트 (맨 위에)
+                            # -----------------------
+                            st.subheader("📄 OCR 분석 텍스트 (전체)")
+                            design_text = result.get("design_ocr_text", "")
+                            if design_text:
+                                # 너무 길 수 있어서 text_area 사용
+                                st.text_area(
+                                    "디자인 OCR 결과",
+                                    value=design_text,
+                                    height=250,
+                                )
+                            else:
+                                st.write("OCR 텍스트를 가져오지 못했습니다.")
+
+                            st.markdown("---")
+
+                            # -----------------------
+                            # 2) AI 정밀 분석 결과 (하이라이트)
+                            #    server.py에서
+                            #    result['design_ocr_highlighted_html']
+                            #    가 포함되어 있다는 가정
+                            # -----------------------
+                            highlight_html = result.get("design_ocr_highlighted_html")
+                            st.subheader("🔎 AI 정밀 분석 결과 (하이라이트)")
+                            if highlight_html:
+                                st.markdown(
+                                    """
+                                    <div style="font-size:13px; color:#555; margin-bottom:8px;">
+                                      * 붉은색으로 표시된 부분은 기준 정보와 다르거나 오타가 의심되는 곳입니다.
+                                    </div>
+                                    """,
+                                    unsafe_allow_html=True,
+                                )
+                                st.markdown(highlight_html, unsafe_allow_html=True)
+                            else:
+                                st.write("하이라이트 결과가 없습니다.")
+
+                            st.markdown("---")
+
+                            # -----------------------
+                            # 3) 총점 및 법규 준수 여부
                             # -----------------------
                             st.subheader("📌 총점 및 법규 준수 여부")
                             score = result.get("score", "N/A")
@@ -209,8 +249,10 @@ def show_main_app():
                                 for v in law["violations"]:
                                     st.write("-", v)
 
+                            st.markdown("---")
+
                             # -----------------------
-                            # 2) 상세 이슈 목록
+                            # 4) 상세 이슈 목록
                             # -----------------------
                             st.subheader("📌 상세 이슈 목록")
                             issues = result.get("issues", [])
@@ -226,25 +268,6 @@ def show_main_app():
                                     st.write("디자인 실제값:", issue.get("actual"))
                                     st.write("수정 제안:", issue.get("suggestion"))
                                     st.markdown("---")
-
-                            # -----------------------
-                            # 3) AI 정밀 분석 결과 (하이라이트)
-                            #    server.py에서
-                            #    result["design_ocr_highlighted_html"]
-                            #    를 추가해 줬다는 가정
-                            # -----------------------
-                            highlight_html = result.get("design_ocr_highlighted_html")
-                            if highlight_html:
-                                st.subheader("🔎 AI 정밀 분석 결과 (하이라이트)")
-                                st.markdown(
-                                    """
-                                    <div style="font-size:13px; color:#555; margin-bottom:8px;">
-                                      * 붉은색으로 표시된 부분은 기준 정보와 다르거나 오타가 의심되는 곳입니다.
-                                    </div>
-                                    """,
-                                    unsafe_allow_html=True,
-                                )
-                                st.markdown(highlight_html, unsafe_allow_html=True)
 
                         else:
                             st.error("서버에서 오류가 발생했습니다.")
