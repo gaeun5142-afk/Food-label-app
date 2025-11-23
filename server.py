@@ -3,7 +3,7 @@ import json
 import io
 import glob
 import pandas as pd
-from flask import Flask, request, jsonify, render_template, send_file
+from flask import Flask, request, jsonify, render_templates, send_file
 from flask_cors import CORS
 from dotenv import load_dotenv
 import google.generativeai as genai
