@@ -26,6 +26,16 @@ else:
 # Gemini 모델 설정 (기본값, 자동 감지로 덮어씌워질 수 있음)
 MODEL_NAME = 'gemini-1.5-flash'
 
+# 🔴 여기에 추가하세요!
+GENERATION_CONFIG = {
+    "temperature": 0.0,
+    "top_p": 0.95,
+    "top_k": 40,
+    "max_output_tokens": 8192,
+}
+
+# 모델 사용 가능 여부 확인 함수
+def check_available_models():
 # 모델 사용 가능 여부 확인 함수
 def check_available_models():
     """사용 가능한 모델 목록을 확인하고 적절한 모델을 반환합니다."""
@@ -307,6 +317,7 @@ def process_file_to_part(file_storage):
     # Gemini는 image/jpeg, image/png, application/pdf 등을 지원함
     return {"mime_type": mime_type, "data": file_data}
 
+# extract_ingredient_info_from_image 함수 수정
 def extract_ingredient_info_from_image(image_file):
     """원재료 표시사항 이미지에서 필요한 정보만 추출"""
     try:
@@ -314,10 +325,12 @@ def extract_ingredient_info_from_image(image_file):
         image_file.seek(0)
         
         img_pil = PIL.Image.open(io.BytesIO(image_data))
-        model = genai.GenerativeModel(MODEL_NAME)
+        # 🔴 GENERATION_CONFIG 사용하여 일관성 보장
+        model = genai.GenerativeModel(MODEL_NAME, generation_config=GENERATION_CONFIG)
         
         parts = [PROMPT_EXTRACT_INGREDIENT_INFO, img_pil]
         response = model.generate_content(parts)
+        # ... 나머지 코드 동일
         
         result_text = response.text.strip()
         # JSON 파싱
@@ -502,7 +515,7 @@ def create_standard():
     excel_file = request.files.get('excel_file')
 
     # 2. 원재료 이미지들 (여러 개)
-    raw_images = request.files.getlist('raw_images')
+     raw_images = sorted(raw_images, key=lambda x: x.filename or "")
 
     if not excel_file:
         return jsonify({"error": "배합비 엑셀 파일이 필요합니다."}), 400
@@ -529,11 +542,18 @@ def create_standard():
             ingredient_info_list.append(ingredient_info)
     
     # 추출된 원재료 정보를 텍스트로 변환하여 추가
+   ingredient_info_list = sorted(
+        ingredient_info_list, 
+        key=lambda x: x.get("ingredient_name", "")
+    )
+    
+    # 추출된 원재료 정보를 텍스트로 변환하여 추가
     if ingredient_info_list:
         ingredients_text = "--- [원재료 표시사항에서 추출한 정보] ---\n"
         for idx, info in enumerate(ingredient_info_list, 1):
             ingredients_text += f"\n[원재료 {idx}]\n"
-            ingredients_text += json.dumps(info, ensure_ascii=False, indent=2)
+            # 🔴 여기 수정: sort_keys=True 추가
+            ingredients_text += json.dumps(info, ensure_ascii=False, indent=2, sort_keys=True)
             ingredients_text += "\n"
         ingredients_text += "--- [원재료 정보 끝] ---\n"
         parts.append({"text": ingredients_text})
@@ -541,10 +561,8 @@ def create_standard():
     print(f"📂 처리 중: 엑셀 1개 + 원재료 이미지 {len(raw_images)}장 (정보 추출 완료)")
 
     try:
-        # 창의성(Temperature) 0으로 설정해서 로봇처럼 만들기
-        generation_config = {"temperature": 0.0}
-        model = genai.GenerativeModel(MODEL_NAME, generation_config=generation_config)
-
+        # 🔴 여기 수정: generation_config=GENERATION_CONFIG 추가
+        model = genai.GenerativeModel(MODEL_NAME, generation_config=GENERATION_CONFIG)
         response = model.generate_content(parts)
 
         # JSON 파싱
@@ -621,7 +639,7 @@ def verify_design():
     try:
         design_file = request.files.get('design_file')
         standard_excel = request.files.get('standard_excel')
-        standard_json = request.form.get('standard_data')
+       standard_json = json.dumps(standard_data, ensure_ascii=False, sort_keys=True)
 
         if not design_file:
             return jsonify({"error": "디자인 파일이 필요합니다. (design_file)"}), 400
@@ -792,7 +810,7 @@ def upload_qa():
     print("📋 QA 자료 업로드 및 식품표시사항 작성 시작...")
     
     # QA 자료 파일들 (엑셀, 이미지 등)
-    qa_files = request.files.getlist('qa_files')
+     qa_files = sorted(qa_files, key=lambda x: x.filename or "")
     
     if not qa_files or len(qa_files) == 0:
         return jsonify({"error": "QA 자료 파일이 필요합니다."}), 400
@@ -827,9 +845,10 @@ def upload_qa():
 }
 """
     
-    # 법령 정보 추가
+   # 법령 정보 추가
     if ALL_LAW_TEXT:
-        qa_prompt += f"\n\n--- [참고 법령] ---\n{ALL_LAW_TEXT}\n--- [법령 끝] ---\n"
+        law_text = ALL_LAW_TEXT[:MAX_LAW_CHARS]  # 🔴 일관된 길이로 자르기
+        qa_prompt += f"\n\n--- [참고 법령] ---\n{law_text}\n--- [법령 끝] ---\n"
     
     parts.append(qa_prompt)
     
@@ -841,8 +860,9 @@ def upload_qa():
     
     print(f"📂 QA 자료 처리 중: {len(qa_files)}개 파일")
     
-    try:
-        model = genai.GenerativeModel(MODEL_NAME)
+        try:
+        # 🔴 GENERATION_CONFIG 사용하여 일관성 보장
+        model = genai.GenerativeModel(MODEL_NAME, generation_config=GENERATION_CONFIG)
         response = model.generate_content(parts)
         
         # JSON 파싱
