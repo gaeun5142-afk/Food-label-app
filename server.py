@@ -1,4 +1,5 @@
 import os
+
 import json
 import io
 import glob
@@ -26,16 +27,6 @@ else:
 # Gemini 모델 설정 (기본값, 자동 감지로 덮어씌워질 수 있음)
 MODEL_NAME = 'gemini-1.5-flash'
 
-# 🔴 여기에 추가하세요!
-GENERATION_CONFIG = {
-    "temperature": 0.0,
-    "top_p": 0.95,
-    "top_k": 40,
-    "max_output_tokens": 8192,
-}
-
-# 모델 사용 가능 여부 확인 함수
-def check_available_models():
 # 모델 사용 가능 여부 확인 함수
 def check_available_models():
     """사용 가능한 모델 목록을 확인하고 적절한 모델을 반환합니다."""
@@ -110,7 +101,6 @@ def load_law_texts() -> str:
     return all_law_text
 
 ALL_LAW_TEXT = load_law_texts()
-MAX_LAW_CHARS = 30000
 
 # --- 프롬프트 (지시사항) ---
 
@@ -317,7 +307,6 @@ def process_file_to_part(file_storage):
     # Gemini는 image/jpeg, image/png, application/pdf 등을 지원함
     return {"mime_type": mime_type, "data": file_data}
 
-# extract_ingredient_info_from_image 함수 수정
 def extract_ingredient_info_from_image(image_file):
     """원재료 표시사항 이미지에서 필요한 정보만 추출"""
     try:
@@ -325,12 +314,10 @@ def extract_ingredient_info_from_image(image_file):
         image_file.seek(0)
         
         img_pil = PIL.Image.open(io.BytesIO(image_data))
-        # 🔴 GENERATION_CONFIG 사용하여 일관성 보장
-        model = genai.GenerativeModel(MODEL_NAME, generation_config=GENERATION_CONFIG)
+        model = genai.GenerativeModel(MODEL_NAME)
         
         parts = [PROMPT_EXTRACT_INGREDIENT_INFO, img_pil]
         response = model.generate_content(parts)
-        # ... 나머지 코드 동일
         
         result_text = response.text.strip()
         # JSON 파싱
@@ -515,7 +502,7 @@ def create_standard():
     excel_file = request.files.get('excel_file')
 
     # 2. 원재료 이미지들 (여러 개)
-     raw_images = sorted(raw_images, key=lambda x: x.filename or "")
+    raw_images = request.files.getlist('raw_images')
 
     if not excel_file:
         return jsonify({"error": "배합비 엑셀 파일이 필요합니다."}), 400
@@ -542,18 +529,11 @@ def create_standard():
             ingredient_info_list.append(ingredient_info)
     
     # 추출된 원재료 정보를 텍스트로 변환하여 추가
-   ingredient_info_list = sorted(
-        ingredient_info_list, 
-        key=lambda x: x.get("ingredient_name", "")
-    )
-    
-    # 추출된 원재료 정보를 텍스트로 변환하여 추가
     if ingredient_info_list:
         ingredients_text = "--- [원재료 표시사항에서 추출한 정보] ---\n"
         for idx, info in enumerate(ingredient_info_list, 1):
             ingredients_text += f"\n[원재료 {idx}]\n"
-            # 🔴 여기 수정: sort_keys=True 추가
-            ingredients_text += json.dumps(info, ensure_ascii=False, indent=2, sort_keys=True)
+            ingredients_text += json.dumps(info, ensure_ascii=False, indent=2)
             ingredients_text += "\n"
         ingredients_text += "--- [원재료 정보 끝] ---\n"
         parts.append({"text": ingredients_text})
@@ -561,8 +541,10 @@ def create_standard():
     print(f"📂 처리 중: 엑셀 1개 + 원재료 이미지 {len(raw_images)}장 (정보 추출 완료)")
 
     try:
-        # 🔴 여기 수정: generation_config=GENERATION_CONFIG 추가
-        model = genai.GenerativeModel(MODEL_NAME, generation_config=GENERATION_CONFIG)
+        # 창의성(Temperature) 0으로 설정해서 로봇처럼 만들기
+        generation_config = {"temperature": 0.0}
+        model = genai.GenerativeModel(MODEL_NAME, generation_config=generation_config)
+
         response = model.generate_content(parts)
 
         # JSON 파싱
@@ -636,21 +618,25 @@ def download_standard_excel():
 @app.route('/api/verify-design', methods=['POST'])
 def verify_design():
     print("🕵️‍♂️ 2단계: 디자인 검증 시작...")
+
     try:
+        # -----------------------------
+        # 1. 파일 받기
+        # -----------------------------
         design_file = request.files.get('design_file')
         standard_excel = request.files.get('standard_excel')
-       standard_json = json.dumps(standard_data, ensure_ascii=False, sort_keys=True)
+        standard_json = request.form.get('standard_data')
 
         if not design_file:
             return jsonify({"error": "디자인 파일이 필요합니다. (design_file)"}), 400
 
-        # 🔹 엑셀을 올렸을 때만 읽고, 안 올리면 그냥 넘어가기
-        if standard_excel and standard_excel.filename:
+        # -----------------------------
+        # 2. 기준 데이터 로딩 (엑셀 -> JSON)
+        # -----------------------------
+        if standard_excel:
             try:
-                excel_bytes = standard_excel.read()
-
                 df_dict = pd.read_excel(
-                    io.BytesIO(excel_bytes),
+                    io.BytesIO(standard_excel.read()),
                     sheet_name=None,
                     engine='openpyxl'
                 )
@@ -658,45 +644,70 @@ def verify_design():
                 first_sheet_name = list(df_dict.keys())[0]
                 first_sheet_df = df_dict[first_sheet_name]
 
-                col = "원재료명" if "원재료명" in first_sheet_df.columns else first_sheet_df.columns[0]
+                standard_data = {}
+                if not first_sheet_df.empty:
+                    col = first_sheet_df.columns[0]
+                    if '원재료명' in first_sheet_df.columns:
+                        col = '원재료명'
 
-                ingredients_list = (
-                    first_sheet_df[col]
-                    .dropna()
-                    .astype(str)
-                    .tolist()
+                    ingredients_list = (
+                        first_sheet_df[col]
+                        .dropna()
+                        .astype(str)
+                        .tolist()
+                    )
+
+                    standard_data = {
+                        'ingredients': {
+                            'structured_list': ingredients_list,
+                            'continuous_text': ', '.join(ingredients_list)
+                        }
+                    }
+
+                standard_json = json.dumps(
+                    standard_data,
+                    ensure_ascii=False
                 )
 
-                standard_data = {
-                    "ingredients": {
-                        "structured_list": ingredients_list,
-                        "continuous_text": ", ".join(ingredients_list),
-                    }
-                }
-                standard_json = json.dumps(standard_data, ensure_ascii=False)
-
             except Exception as e:
+                # 엑셀 읽기 실패해도 명확한 에러 메시지 주기
                 print("❌ 엑셀 읽기 실패:", e)
                 return jsonify({
-                    "error": f"기준 데이터를 읽는 과정에서 문제가 발생했습니다: {str(e)}"
+                    "error": f"엑셀 파일을 읽는 중 오류가 발생했습니다: {str(e)}"
                 }), 400
 
-        # 🔹 미리 로딩한 법령 텍스트에서 앞부분만 사용
-        law_text = (ALL_LAW_TEXT or "")[:MAX_LAW_CHARS]
+        # -----------------------------
+        # 3. 법령 텍스트 읽기
+        # -----------------------------
+        law_text = ""
+        # law_text_*.txt 파일들
+        for fpath in glob.glob('law_text_*.txt'):
+            try:
+                with open(fpath, 'r', encoding='utf-8') as f:
+                    law_text += f.read() + "\n"
+            except Exception as e:
+                print(f"⚠️ 법령 파일 읽기 실패 ({fpath}):", e)
 
-        # 🔹 프롬프트 조합
+        # law_context.txt (있으면 사용, 없으면 그냥 넘어감)
+        try:
+            with open('law_context.txt', 'r', encoding='utf-8') as f:
+                law_text = f.read() + "\n" + law_text
+        except FileNotFoundError:
+            print("⚠️ law_context.txt 파일이 없습니다. (무시하고 진행)")
+        except Exception as e:
+            print("⚠️ law_context.txt 읽기 실패:", e)
+
+        # -----------------------------
+        # 4. 프롬프트 조합
+        # -----------------------------
         full_prompt = f"""
-
         {PROMPT_VERIFY_DESIGN}
 
         [참고 법령]
-
-        {law_text}
+        {law_text[:60000]}
 
         [기준 데이터(JSON)]
-
         {standard_json}
-
         """
 
         parts = [full_prompt]
@@ -760,49 +771,6 @@ def verify_design():
             "error": f"서버 내부 오류가 발생했습니다: {str(e)}"
         }), 500
 
-        try:
-            model = genai.GenerativeModel(
-                MODEL_NAME,
-                generation_config={"temperature": 0.0}
-            )
-            response = model.generate_content(parts)
-            result_text = response.text.strip()
-
-            # JSON 추출
-            json_match = re.search(r"(\{.*\})", result_text, re.DOTALL)
-            if json_match:
-                clean_json = json_match.group(1)
-                clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
-                result = json.loads(clean_json)
-            else:
-                # JSON 패턴이 없으면 그냥 파싱 시도
-                clean_json = result_text.replace("```", "").strip()
-                result = json.loads(clean_json)
-
-            # 🔴 여기서 하이라이트 HTML 생성해서 result에 추가
-            design_text = result.get("design_ocr_text", "")
-            issues = result.get("issues", [])
-            highlighted_html = make_highlighted_html(design_text, issues)
-            result["design_ocr_highlighted_html"] = highlighted_html
-
-            return jsonify(result)
-
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            print("❌ Gemini 호출/파싱 중 오류:", e)
-            return jsonify({
-                "error": f"AI 분석 중 오류가 발생했습니다: {str(e)}"
-            }), 500
-
-    except Exception as e:
-        # 위에서 예상 못 한 모든 예외는 여기로
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            "error": f"서버 내부 오류가 발생했습니다: {str(e)}"
-        }), 500
-
 # QA 자료 업로드 및 식품표시사항 작성 API
 @app.route('/api/upload-qa', methods=['POST'])
 def upload_qa():
@@ -810,7 +778,7 @@ def upload_qa():
     print("📋 QA 자료 업로드 및 식품표시사항 작성 시작...")
     
     # QA 자료 파일들 (엑셀, 이미지 등)
-     qa_files = sorted(qa_files, key=lambda x: x.filename or "")
+    qa_files = request.files.getlist('qa_files')
     
     if not qa_files or len(qa_files) == 0:
         return jsonify({"error": "QA 자료 파일이 필요합니다."}), 400
@@ -845,10 +813,9 @@ def upload_qa():
 }
 """
     
-   # 법령 정보 추가
+    # 법령 정보 추가
     if ALL_LAW_TEXT:
-        law_text = ALL_LAW_TEXT[:MAX_LAW_CHARS]  # 🔴 일관된 길이로 자르기
-        qa_prompt += f"\n\n--- [참고 법령] ---\n{law_text}\n--- [법령 끝] ---\n"
+        qa_prompt += f"\n\n--- [참고 법령] ---\n{ALL_LAW_TEXT}\n--- [법령 끝] ---\n"
     
     parts.append(qa_prompt)
     
@@ -860,9 +827,8 @@ def upload_qa():
     
     print(f"📂 QA 자료 처리 중: {len(qa_files)}개 파일")
     
-        try:
-        # 🔴 GENERATION_CONFIG 사용하여 일관성 보장
-        model = genai.GenerativeModel(MODEL_NAME, generation_config=GENERATION_CONFIG)
+    try:
+        model = genai.GenerativeModel(MODEL_NAME)
         response = model.generate_content(parts)
         
         # JSON 파싱
@@ -879,29 +845,9 @@ def upload_qa():
                 result_text = "\n".join(lines[1:])
             if result_text.endswith("```"):
                 result_text = result_text[:-3]
-        
+
         result_text = result_text.strip()
-        
-        # JSON 파싱 시도
-        try:
-            result = json.loads(result_text)
-        except json.JSONDecodeError as json_err:
-            print(f"❌ JSON 파싱 오류: {json_err}")
-            print(f"응답 텍스트 (처음 1000자): {result_text[:1000]}")
-            print(f"오류 위치: line {json_err.lineno}, column {json_err.colno}")
-            # JSON 수정 시도
-            try:
-                result_text_fixed = result_text.replace(',\n}', '\n}').replace(',\n]', '\n]')
-                result = json.loads(result_text_fixed)
-                print("✅ JSON 수정 후 파싱 성공")
-            except:
-                return jsonify({"error": f"JSON 파싱 실패: {str(json_err)}. 응답의 일부: {result_text[:200]}..."}), 500
-        
-        return jsonify(result)
-        
-    except Exception as e:
-        print(f"❌ QA 자료 처리 오류: {e}")
-        import traceback
+@@ -25,10 +870,12 @@
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
@@ -914,4 +860,3 @@ if __name__ == '__main__':
     from waitress import serve
 
     serve(app, host='0.0.0.0', port=8080)
-
