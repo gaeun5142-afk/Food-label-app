@@ -8,30 +8,13 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 import google.generativeai as genai
 import PIL.Image
+import PIL.ImageEnhance
 import re
 
 # --- 설정 및 초기화 ---
 load_dotenv()
 app = Flask(__name__)
 CORS(app)
-
-# -----------------------------
-# 모든 예외를 JSON으로 돌려주는 전역 에러 핸들러
-# -----------------------------
-@app.errorhandler(Exception)
-def handle_all_errors(e):
-    import traceback
-    traceback.print_exc()  # Render 로그에 스택트레이스 출력
-
-    # Flask/Werkzeug가 감싼 예외인 경우 원본 꺼내기
-    original = getattr(e, "original_exception", None)
-    if original is not None:
-        msg = f"{original.__class__.__name__}: {original}"
-    else:
-        msg = f"{e.__class__.__name__}: {e}"
-
-    # 항상 JSON으로 반환
-    return jsonify({"error": msg}), 500
 
 # API 키 설정
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
@@ -247,19 +230,19 @@ PROMPT_VERIFY_DESIGN = """
 [감점 기준표 (총점 100점에서 시작)]
 기본 100점에서 아래 오류가 발견될 때마다 점수를 차감하세요. (최하 0점)
 
-1. **원재료명 오류 (-3점/건)**:
+1. **원재료명 오류 (-5점/건)**:
    - Standard(엑셀)에 있는 원재료가 Design(이미지)에 없거나 순서가 다름.
    - 함량(%) 숫자가 0.1%라도 다름. (예: 70.6% vs 70.5%)
-2. **영양성분 오류 (-3점/건)**:
+2. **영양성분 오류 (-5점/건)**:
    - 나트륨, 탄수화물, 당류 등의 수치 또는 단위(g, mg) 불일치.
    - 비율(%) 숫자가 다름.
-3. **법적 의무 문구 누락 (-5점/건)**:
+3. **법적 의무 문구 누락 (-10점/건)**:
    - "소비기한" (유통기한 아님) 표기 여부.
    - "부정 불량식품 신고는 국번없이 1399" 표기 여부.
    - 알레르기 유발물질 별도 표시란 유무.
    - 포장재질 및 분리배출 마크 유무.
-4. **단순 오타 (-1점/건)**:
-   - 띄어쓰기, 괄호 위치 등 경미한 차이.
+4. **단순 오타 (-2점/건)**:
+   - 괄호 위치 등 경미한 차이.
 
 [분석 프로세스 - 단계별 수행]
 
@@ -303,6 +286,10 @@ PROMPT_VERIFY_DESIGN = """
 }
 """
 
+
+
+
+
 # --- 파일 처리 함수들 ---
 
 def process_file_to_part(file_storage):
@@ -321,9 +308,39 @@ def process_file_to_part(file_storage):
             print(f"엑셀 변환 실패: {e}")
             return None
 
-    # 이미지나 PDF는 그대로 전달
-    # Gemini는 image/jpeg, image/png, application/pdf 등을 지원함
+    # [NEW] 이미지 파일인 경우: 선명도 보정 (OCR 정확도 UP)
+    if mime_type.startswith('image/'):
+        try:
+            img = PIL.Image.open(io.BytesIO(file_data))
+
+            # 1. 흑백 변환 (글자 윤곽 강조)
+            img = img.convert('L')
+
+            # 2. 대비(Contrast) 2배 증가
+            enhancer = PIL.ImageEnhance.Contrast(img)
+            img = enhancer.enhance(2.0)
+
+            # 3. 선명도(Sharpness) 1.5배 증가
+            enhancer = PIL.ImageEnhance.Sharpness(img)
+            img = enhancer.enhance(1.5)
+
+            # 보정된 이미지를 다시 바이트로 변환
+            byte_io = io.BytesIO()
+            # 원본 포맷 유지하되, 없으면 JPEG 사용
+            fmt = img.format if img.format else 'JPEG'
+            img.save(byte_io, format=fmt)
+            byte_io.seek(0)
+
+            return {"mime_type": mime_type, "data": byte_io.read()}
+
+        except Exception as e:
+            print(f"⚠️ 이미지 보정 실패 (원본 사용): {e}")
+            # 실패 시 원본 그대로 사용
+            return {"mime_type": mime_type, "data": file_data}
+
+    # PDF 등 기타 파일은 그대로 전달
     return {"mime_type": mime_type, "data": file_data}
+
 
 def extract_ingredient_info_from_image(image_file):
     """원재료 표시사항 이미지에서 필요한 정보만 추출"""
@@ -446,7 +463,7 @@ def create_standard_excel(data):
 
 @app.route('/')
 def index():
-    return "Food Label API is running"
+    return render_template('index.html')
 
 
 # 1단계: 정답지 만들기 (엑셀 + 원재료 사진들 몽땅)
@@ -571,156 +588,189 @@ def download_standard_excel():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+# 엑셀 파일에서 기준 데이터 읽기
+@app.route('/api/read-standard-excel', methods=['POST'])
+def read_standard_excel():
+    """엑셀 파일에서 기준 데이터를 읽어옴"""
+    try:
+        excel_file = request.files.get('excel_file')
+        if not excel_file:
+            return jsonify({"error": "엑셀 파일이 필요합니다."}), 400
+        
+        df_dict = pd.read_excel(io.BytesIO(excel_file.read()), sheet_name=None, engine='openpyxl')
+        
+        # 엑셀 데이터를 JSON 형식으로 변환
+        result = {}
+        
+        if '제품정보' in df_dict:
+            product_info = df_dict['제품정보'].to_dict('records')[0]
+            result['product_info'] = product_info
+        
+        # 첫 번째 시트를 우선 사용
+        first_sheet_name = list(df_dict.keys())[0]
+        first_sheet_df = df_dict[first_sheet_name]
+        
+        # 원재료명 처리 (시트 이름에 관계없이 첫 번째 시트 사용)
+        if '원재료명' in df_dict:
+            ingredients_list = df_dict['원재료명']['원재료명'].dropna().tolist()
+            result['ingredients'] = {
+                'structured_list': ingredients_list,
+                'continuous_text': ', '.join(ingredients_list)
+            }
+        elif '원재료명_연속텍스트' in df_dict:
+            continuous_text = df_dict['원재료명_연속텍스트']['원재료명_연속텍스트'].iloc[0]
+            result['ingredients'] = {
+                'structured_list': continuous_text.split(', '),
+                'continuous_text': continuous_text
+            }
+        elif not first_sheet_df.empty:
+            # 첫 번째 시트의 첫 번째 컬럼을 원재료명으로 사용
+            first_column = first_sheet_df.columns[0]
+            if '원재료명' in first_sheet_df.columns:
+                ingredients_list = first_sheet_df['원재료명'].dropna().tolist()
+            else:
+                ingredients_list = first_sheet_df[first_column].dropna().astype(str).tolist()
+            
+            if ingredients_list:
+                result['ingredients'] = {
+                    'structured_list': ingredients_list,
+                    'continuous_text': ', '.join(ingredients_list)
+                }
+        
+        if '알레르기정보' in df_dict:
+            allergens_df = df_dict['알레르기정보']
+            result['allergens'] = {}
+            for _, row in allergens_df.iterrows():
+                if row['항목'] == '함유 알레르기 유발물질':
+                    result['allergens']['contains'] = row['내용'].split(', ')
+                elif row['항목'] == '제조시설 안내':
+                    result['allergens']['manufacturing_facility'] = row['내용']
+        
+        if '영양정보' in df_dict:
+            nutrition_df = df_dict['영양정보']
+            per_100g = {}
+            for _, row in nutrition_df.iterrows():
+                if row['영양성분'] == '총 열량':
+                    per_100g['calories'] = row['100g 당']
+                else:
+                    per_100g[row['영양성분']] = {
+                        'amount': row['100g 당'],
+                        'daily_value': row['1일 영양성분 기준치에 대한 비율(%)']
+                    }
+            result['nutrition_info'] = {'per_100g': per_100g}
+        
+        if '제조원정보' in df_dict:
+            result['manufacturer'] = df_dict['제조원정보'].to_dict('records')[0]
+        
+        if '주의사항' in df_dict:
+            result['precautions'] = df_dict['주의사항']['주의사항'].tolist()
+        
+        if '원재료상세' in df_dict:
+            result['details'] = df_dict['원재료상세'].to_dict('records')
+        
+        return jsonify(result)
+    except Exception as e:
+        print(f"❌ 엑셀 읽기 오류: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
-# 2단계: 검증하기 (엑셀 파일 또는 JSON + 디자인 이미지)
 # 2단계: 검증하기 (엑셀 파일 또는 JSON + 디자인 이미지)
 @app.route('/api/verify-design', methods=['POST'])
 def verify_design():
     print("🕵️‍♂️ 2단계: 디자인 검증 시작...")
 
-    try:
-        # -----------------------------
-        # 1. 파일 받기
-        # -----------------------------
-        design_file = request.files.get('design_file')
-        standard_excel = request.files.get('standard_excel')
-        standard_json = request.form.get('standard_data')
+    # 1. 파일 받기
+    design_file = request.files.get('design_file')
+    standard_excel = request.files.get('standard_excel')
+    standard_json = request.form.get('standard_data')
 
-        if not design_file:
-            return jsonify({"error": "디자인 파일이 필요합니다. (design_file)"}), 400
+    if not design_file:
+        return jsonify({"error": "디자인 파일이 필요합니다."}), 400
 
-        # -----------------------------
-        # 2. 기준 데이터 로딩 (엑셀 -> JSON)
-        #    - sheet_name=None 대신 첫 번째 시트만 읽어서 메모리 절약
-        # -----------------------------
-        if standard_excel:
-            try:
-                df = pd.read_excel(
-                    io.BytesIO(standard_excel.read()),
-                    sheet_name=0,          # ✅ 첫 번째 시트만
-                    engine='openpyxl'
-                )
-
-                first_sheet_df = df
-
-                standard_data = {}
-                if not first_sheet_df.empty:
-                    col = first_sheet_df.columns[0]
-                    if '원재료명' in first_sheet_df.columns:
-                        col = '원재료명'
-
-                    ingredients_list = (
-                        first_sheet_df[col]
-                        .dropna()
-                        .astype(str)
-                        .tolist()
-                    )
-
-                    standard_data = {
-                        'ingredients': {
-                            'structured_list': ingredients_list,
-                            'continuous_text': ', '.join(ingredients_list)
-                        }
-                    }
-
-                standard_json = json.dumps(
-                    standard_data,
-                    ensure_ascii=False
-                )
-
-                # ✅ 프롬프트에 넣을 기준 JSON 길이도 제한 (너무 길면 잘라냄)
-                if standard_json and len(standard_json) > 8000:
-                    standard_json = standard_json[:8000] + "...(생략)"
-
-            except Exception as e:
-                print("❌ 엑셀 읽기 실패:", e)
-                return jsonify({
-                    "error": f"엑셀 파일을 읽는 중 오류가 발생했습니다: {str(e)}"
-                }), 400
-
-        # -----------------------------
-        # 3. 법령 텍스트 읽기
-        #    - 이미 글로벌로 로드한 ALL_LAW_TEXT 재사용
-        #    - 너무 길면 앞부분만 사용해서 메모리, 토큰 둘 다 절약
-        # -----------------------------
-        law_text = ALL_LAW_TEXT or ""
-        MAX_LAW_CHARS = 20000   # 필요하면 더 줄여도 됨 (예: 15000)
-        if len(law_text) > MAX_LAW_CHARS:
-            law_text = law_text[:MAX_LAW_CHARS] + "\n...(이하 생략)"
-
-        # -----------------------------
-        # 4. 프롬프트 조합
-        # -----------------------------
-        full_prompt = f"""
-        {PROMPT_VERIFY_DESIGN}
-
-        [참고 법령]
-        {law_text}
-
-        [기준 데이터(JSON)]
-        {standard_json}
-        """
-
-        parts = [full_prompt]
-
-        # 디자인 파일을 Gemini가 이해할 수 있는 Part로 변환
-        design_file.stream.seek(0)
-        design_part = process_file_to_part(design_file)
-        if design_part:
-            parts.append(design_part)
-        else:
-            return jsonify({"error": "디자인 파일을 처리할 수 없습니다."}), 400
-
-        # -----------------------------
-        # 5. Gemini 호출
-        # -----------------------------
-        if not GOOGLE_API_KEY:
-            return jsonify({
-                "error": "GOOGLE_API_KEY 환경변수가 설정되어 있지 않습니다."
-            }), 500
-
+    # 2. 기준 데이터 로딩 (엑셀 -> JSON)
+    if standard_excel:
         try:
-            model = genai.GenerativeModel(
-                MODEL_NAME,
-                generation_config={"temperature": 0.0}
-            )
-            response = model.generate_content(parts)
-            result_text = response.text.strip()
+            df_dict = pd.read_excel(io.BytesIO(standard_excel.read()), sheet_name=None, engine='openpyxl')
+            first_sheet_name = list(df_dict.keys())[0]
+            first_sheet_df = df_dict[first_sheet_name]
 
-            # JSON 추출
-            json_match = re.search(r"(\{.*\})", result_text, re.DOTALL)
-            if json_match:
-                clean_json = json_match.group(1)
-                clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
-                return jsonify(json.loads(clean_json))
-            else:
-                # JSON 패턴이 없으면 그냥 파싱 시도
-                clean_json = result_text.replace("```", "").strip()
-                return jsonify(json.loads(clean_json))
+            standard_data = {}
+            if not first_sheet_df.empty:
+                # 원재료명 컬럼 찾기 (단순화)
+                col = first_sheet_df.columns[0]
+                if '원재료명' in first_sheet_df.columns: col = '원재료명'
 
+                ingredients_list = first_sheet_df[col].dropna().astype(str).tolist()
+                standard_data = {'ingredients': {'structured_list': ingredients_list,
+                                                 'continuous_text': ', '.join(ingredients_list)}}
+
+            standard_json = json.dumps(standard_data, ensure_ascii=False)
         except Exception as e:
-            import traceback
-            traceback.print_exc()
-            print("❌ Gemini 호출/파싱 중 오류:", e)
-            return jsonify({
-                "error": f"AI 분석 중 오류가 발생했습니다: {str(e)}"
-            }), 500
+            return jsonify({"error": f"엑셀 읽기 실패: {str(e)}"}), 400
+
+    # 3. 법령 파일 읽기 (수정됨: 모든 법령 파일 동등하게 로딩)
+    law_text = ""
+
+    # (1) 현재 폴더의 모든 'law_'로 시작하는 txt 파일 찾기
+    # law_context.txt, law_text_식품위생법.txt 등 모두 포함됨
+    all_law_files = glob.glob('law_*.txt')
+
+    print(f"📚 법령 파일 로딩 중: {len(all_law_files)}개 발견")
+
+    for file_path in all_law_files:
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                # 각 법령 파일 내용을 명확히 구분해서 합치기
+                law_text += f"\n\n=== [참고 법령: {file_path}] ===\n{content}\n==========================\n"
+        except Exception as e:
+            print(f"⚠️ 법령 파일 읽기 실패 ({file_path}): {e}")
+
+    # 4. AI 프롬프트 조립
+    parts = [f"""
+    {PROMPT_VERIFY_DESIGN}
+
+    [참고 법령]
+    {law_text[:60000]}
+
+    [기준 데이터]
+    {standard_json}
+    """]
+
+    if design_file:
+        parts.append(process_file_to_part(design_file))
+
+    # 5. AI 호출 및 결과 처리 (여기가 중요)
+    try:
+        # 창의성 0.0 설정 (정규성 확보)
+        model = genai.GenerativeModel(
+            MODEL_NAME,
+            generation_config={"temperature": 0.0}
+        )
+
+        response = model.generate_content(parts)
+        result_text = response.text.strip()
+
+        # [강력한 JSON 파싱 로직] 정규표현식으로 JSON만 추출
+        json_match = re.search(r"(\{.*\})", result_text, re.DOTALL)
+
+        if json_match:
+            clean_json = json_match.group(1)
+            # 간단한 쉼표 보정
+            clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
+            return jsonify(json.loads(clean_json))
+        else:
+            # JSON 패턴 못 찾으면 원본에서 시도 (혹시 모르니)
+            clean_json = result_text.replace("``````", "").strip()
+            return jsonify(json.loads(clean_json))
 
     except Exception as e:
-        # 위에서 예상 못 한 모든 예외는 여기로
+        print(f"❌ 검증 오류: {e}")
+        # 상세 에러 로그 출력
         import traceback
         traceback.print_exc()
-        return jsonify({
-            "error": f"서버 내부 오류가 발생했습니다: {str(e)}"
-        }), 500
-
-    except Exception as e:
-        # 위에서 예상 못 한 모든 예외는 여기로
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            "error": f"서버 내부 오류가 발생했습니다: {str(e)}"
-        }), 500
+        return jsonify({"error": str(e)}), 500
 
 
 # QA 자료 업로드 및 식품표시사항 작성 API
