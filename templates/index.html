@@ -23,18 +23,6 @@
         .law-status-compliant { color: #27ae60; font-weight: bold; }
         .law-status-violation { color: #e74c3c; font-weight: bold; }
         .law-status-review { color: #f39c12; font-weight: bold; }
-            /* 여기에 붙여넣기 */
-    .highlight-error {
-        background-color: #ffe6e6;
-        border-bottom: 2px solid #ff0000;
-        color: #d60000;
-        font-weight: bold;
-        cursor: help;
-    }
-    .highlight-error:hover {
-        background-color: #ffcccc;
-    }
-
     </style>
 </head>
 <body>
@@ -123,30 +111,6 @@
 
         <button id="btnVerify" class="btn btn-action" onclick="verifyDesign()" disabled>검증 시작</button>
     </div>
-
-        <div id="ocrHighlightCard" class="step-card" style="display:none;">
-        <div class="step-title">🔍 AI 정밀 분석 결과 (하이라이트)</div>
-        <p class="text-muted small mb-2">
-            * 붉은색으로 표시된 부분은 기준 정보와 다르거나 오타가 의심되는 곳입니다.<br>
-            * 마우스를 올리면 정답(Expected)을 볼 수 있습니다.
-        </p>
-                <!-- 하이라이트 된 텍스트가 들어갈 상자 -->
-        <div id="ocr-highlight-view" class="ocr-text-box" style="
-            min-height: 150px;
-            max-height: 400px;
-            overflow-y: auto;
-            background: #f8f9fa;
-            padding: 20px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            font-family: 'Pretendard', sans-serif;
-            line-height: 1.8;
-        ">
-            분석 결과가 여기에 표시됩니다...
-        </div>
-    </div>
-
-
 
     <div id="reportArea" class="step-card" style="display:none;">
         <div class="step-title">📊 검증 결과 리포트</div>
@@ -526,30 +490,6 @@
         const list = document.getElementById('issueList');
         list.innerHTML = "";
 
-            // [추가] 하이라이트 박스 켜기 및 내용 채우기
-        // [강력 수정] 하이라이트 박스 강제 표시
-    const ocrCard = document.getElementById('ocrHighlightCard');
-    const ocrView = document.getElementById('ocr-highlight-view');
-
-    // 데이터가 있든 없든 일단 박스가 있는지 확인
-    if (ocrCard && ocrView) {
-        // 박스 보이기 (강제 설정)
-        ocrCard.style.display = 'block';
-
-        if (data.design_ocr_text) {
-            // 텍스트 채우기
-            ocrView.innerHTML = renderHighlightText(data.design_ocr_text, data.issues);
-        } else {
-            ocrView.innerHTML = "OCR 텍스트를 불러오지 못했습니다.";
-        }
-    } else {
-        console.error("HTML에 ocrHighlightCard 아이디가 없습니다! 오타를 확인하세요.");
-    }
-
-
-
-
-
         if (!data.issues || data.issues.length === 0) {
             list.innerHTML = "<div class='alert alert-success'>완벽합니다! 오류가 발견되지 않았습니다.</div>";
             return;
@@ -586,23 +526,6 @@
 
         window.scrollTo(0, document.body.scrollHeight);
     }
-        /* 여기에 붙여넣기 */
-    // 텍스트 하이라이트 처리 함수
-    function renderHighlightText(fullText, issues) {
-        if (!fullText) return "분석된 텍스트가 없습니다.";
-
-        let html = fullText;
-        issues.sort((a, b) => b.actual.length - a.actual.length);
-
-        issues.forEach(issue => {
-            if (issue.actual && html.includes(issue.actual)) {
-                const highlightTag = `<span class="highlight-error" title="오류: ${issue.issue} (정답: ${issue.expected})">${issue.actual}</span>`;
-                html = html.split(issue.actual).join(highlightTag);
-            }
-        });
-        return html;
-    }
-
 </script>
 
 </body>
