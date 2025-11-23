@@ -218,37 +218,124 @@ def show_main_app():
                             st.markdown("---")
 
                             # -----------------------
-                            # 2) 총점 및 법규 준수 여부
+                            # 2) 검증 결과 리포트 카드
                             # -----------------------
-                            st.subheader("📌 총점 및 법규 준수 여부")
                             score = result.get("score", "N/A")
                             law = result.get("law_compliance", {})
-                            st.write(f"**점수:** {score}")
-                            st.write("**법규 상태:**", law.get("status", "N/A"))
-                            if law.get("violations"):
-                                st.write("**위반 사항:**")
-                                for v in law["violations"]:
-                                    st.write("-", v)
+                            status_raw = (law or {}).get("status", "")
+                            violations = (law or {}).get("violations", [])
+
+                            if status_raw.lower() == "compliant":
+                                badge_color = "#2e7d32"
+                                badge_label = "법률 준수"
+                                badge_icon = "✅"
+                            elif status_raw.lower() == "violation":
+                                badge_color = "#d32f2f"
+                                badge_label = "법률 위반"
+                                badge_icon = "⚠️"
+                            else:
+                                badge_color = "#546e7a"
+                                badge_label = status_raw or "확인 필요"
+                                badge_icon = "ℹ️"
+
+                            violations_html = ""
+                            if violations:
+                                items = "".join(
+                                    f"<li>{v}</li>" for v in violations
+                                )
+                                violations_html = f"""
+                                <div style="margin-top:12px;">
+                                  <div style="font-weight:600; margin-bottom:4px;">위반 사항:</div>
+                                  <ul style="margin-top:0; padding-left:20px; font-size:13px; color:#444;">
+                                    {items}
+                                  </ul>
+                                </div>
+                                """
+
+                            report_html = f"""
+                            <div style="
+                                background:#f5f7fb;
+                                padding:24px 24px 20px 24px;
+                                border-radius:18px;
+                                margin-top:8px;
+                                ">
+                              <div style="font-weight:700; font-size:16px; margin-bottom:16px;">
+                                📊 검증 결과 리포트
+                              </div>
+                              <div style="font-size:18px; margin-bottom:10px;">
+                                점수:
+                                <span style="
+                                    background:#2962ff;
+                                    color:#ffffff;
+                                    padding:6px 14px;
+                                    border-radius:999px;
+                                    font-weight:700;
+                                    ">
+                                  {score}점
+                                </span>
+                              </div>
+                              <div style="margin-top:4px; font-size:14px;">
+                                법률 준수 상태:
+                                <span style="
+                                    background:{badge_color}1A;
+                                    color:{badge_color};
+                                    padding:4px 12px;
+                                    border-radius:999px;
+                                    font-weight:600;
+                                    ">
+                                  {badge_icon} {badge_label}
+                                </span>
+                              </div>
+                              {violations_html}
+                            </div>
+                            """
+                            st.markdown(report_html, unsafe_allow_html=True)
 
                             st.markdown("---")
 
                             # -----------------------
-                            # 3) 상세 이슈 목록
+                            # 3) 상세 문제 목록 (카드 스타일)
                             # -----------------------
-                            st.subheader("📌 상세 이슈 목록")
+                            st.subheader("📌 상세 문제 목록")
                             issues = result.get("issues", [])
+
                             if not issues:
-                                st.write("발견된 이슈가 없습니다. 👍")
+                                st.write("발견된 문제가 없습니다. 👍")
                             else:
                                 for i, issue in enumerate(issues, start=1):
-                                    st.markdown(f"#### 이슈 {i}")
-                                    st.write("유형:", issue.get("type"))
-                                    st.write("위치:", issue.get("location"))
-                                    st.write("설명:", issue.get("issue"))
-                                    st.write("기준값:", issue.get("expected"))
-                                    st.write("디자인 실제값:", issue.get("actual"))
-                                    st.write("수정 제안:", issue.get("suggestion"))
-                                    st.markdown("---")
+                                    issue = issue or {}
+                                    title = issue.get("location") or "표시 항목"
+                                    desc = issue.get("issue") or ""
+                                    expected = issue.get("expected") or ""
+                                    actual = issue.get("actual") or ""
+                                    suggestion = issue.get("suggestion") or ""
+
+                                    card_html = f"""
+                                    <div style="
+                                        background:#fff9e6;
+                                        border-radius:14px;
+                                        padding:16px 20px;
+                                        margin-bottom:12px;
+                                        border-left:6px solid #ffb300;
+                                        ">
+                                      <div style="font-weight:700; margin-bottom:4px;">
+                                        [문제 {i}] {title}
+                                      </div>
+                                      <div style="font-size:13px; color:#555; margin-bottom:8px;">
+                                        {desc}
+                                      </div>
+                                      <div style="font-size:13px; margin-bottom:4px;">
+                                        <b>정답:</b> {expected}
+                                      </div>
+                                      <div style="font-size:13px; margin-bottom:4px;">
+                                        <b>실제:</b> {actual}
+                                      </div>
+                                      <div style="font-size:13px; color:#1565c0; margin-top:4px;">
+                                        <b>수정 제안:</b> {suggestion}
+                                      </div>
+                                    </div>
+                                    """
+                                    st.markdown(card_html, unsafe_allow_html=True)
 
                         else:
                             st.error("서버에서 오류가 발생했습니다.")
