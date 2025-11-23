@@ -36,7 +36,7 @@ if "login_error" not in st.session_state:
 
 
 def show_login_page():
-    # 🔒 원래 쓰던 자물쇠 이모지
+    # 🔒 자물쇠 이모지
     st.title("🔒 바른식품표시 로그인")
 
     # 이전 에러 메시지 표시 (한 번만)
@@ -197,30 +197,11 @@ def show_main_app():
                             st.success("검사 완료!")
 
                             # -----------------------
-                            # 1) OCR 전체 텍스트 (맨 위에)
+                            # 1) AI 정밀 분석 결과 (하이라이트)
                             # -----------------------
-                            st.subheader("📄 OCR 분석 텍스트 (전체)")
-                            design_text = result.get("design_ocr_text", "")
-                            if design_text:
-                                # 너무 길 수 있어서 text_area 사용
-                                st.text_area(
-                                    "디자인 OCR 결과",
-                                    value=design_text,
-                                    height=250,
-                                )
-                            else:
-                                st.write("OCR 텍스트를 가져오지 못했습니다.")
-
-                            st.markdown("---")
-
-                            # -----------------------
-                            # 2) AI 정밀 분석 결과 (하이라이트)
-                            #    server.py에서
-                            #    result['design_ocr_highlighted_html']
-                            #    가 포함되어 있다는 가정
-                            # -----------------------
-                            highlight_html = result.get("design_ocr_highlighted_html")
                             st.subheader("🔎 AI 정밀 분석 결과 (하이라이트)")
+                            highlight_html = result.get("design_ocr_highlighted_html")
+
                             if highlight_html:
                                 st.markdown(
                                     """
@@ -237,7 +218,7 @@ def show_main_app():
                             st.markdown("---")
 
                             # -----------------------
-                            # 3) 총점 및 법규 준수 여부
+                            # 2) 총점 및 법규 준수 여부
                             # -----------------------
                             st.subheader("📌 총점 및 법규 준수 여부")
                             score = result.get("score", "N/A")
@@ -252,7 +233,7 @@ def show_main_app():
                             st.markdown("---")
 
                             # -----------------------
-                            # 4) 상세 이슈 목록
+                            # 3) 상세 이슈 목록
                             # -----------------------
                             st.subheader("📌 상세 이슈 목록")
                             issues = result.get("issues", [])
