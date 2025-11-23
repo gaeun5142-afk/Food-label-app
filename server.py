@@ -3,7 +3,7 @@ import json
 import io
 import glob
 import pandas as pd
-from flask import Flask, request, jsonify, render_templates, send_file
+from flask import Flask, request, jsonify, render_template, send_file
 from flask_cors import CORS
 from dotenv import load_dotenv
 import google.generativeai as genai
@@ -646,7 +646,7 @@ def make_highlighted_html(design_text: str, issues: list) -> str:
 # --- 라우트 ---
 @app.route('/')
 def index():
-    return render_templates('index.html')
+    return render_template('index.html')
 
 # 1단계: 정답지 만들기 (엑셀 + 원재료 사진들 몽땅)
 @app.route('/api/create-standard', methods=['POST'])
