@@ -434,7 +434,7 @@ def make_highlighted_html(design_text: str, issues: list) -> str:
 
     highlight_ranges = []
 
-    # 1) 각 이슈의 actual 문자열 위치 찾기
+    # 1) 각 문제의 actual 문자열 위치 찾기
     for issue in issues or []:
         actual = (issue or {}).get("actual")
         if not actual:
