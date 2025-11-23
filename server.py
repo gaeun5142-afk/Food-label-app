@@ -100,6 +100,7 @@ def load_law_texts() -> str:
     return all_law_text
 
 ALL_LAW_TEXT = load_law_texts()
+MAX_LAW_CHARS = 30000
 
 # --- 프롬프트 (지시사항) ---
 
@@ -662,9 +663,10 @@ def verify_design():
                     "error": f"기준 데이터를 읽는 과정에서 문제가 발생했습니다: {str(e)}"
                 }), 400
 
-        # 🔹 여기부터는 기존 코드 그대로 유지
+        # 🔹 미리 로딩한 법령 텍스트에서 앞부분만 사용
         law_text = (ALL_LAW_TEXT or "")[:MAX_LAW_CHARS]
 
+        # 🔹 프롬프트 조합
         full_prompt = f"""
 
         {PROMPT_VERIFY_DESIGN}
@@ -677,51 +679,6 @@ def verify_design():
 
         {standard_json}
 
-        """
-
-        parts = [full_prompt]
-
-        design_file.stream.seek(0)
-        design_part = process_file_to_part(design_file)
-        if design_part:
-            parts.append(design_part)
-        else:
-            return jsonify({"error": "디자인 파일을 처리할 수 없습니다."}), 400
-
-        ...
-
-        # -----------------------------
-        # 3. 법령 텍스트 읽기
-        # -----------------------------
-        law_text = ""
-        # law_text_*.txt 파일들
-        for fpath in glob.glob('law_text_*.txt'):
-            try:
-                with open(fpath, 'r', encoding='utf-8') as f:
-                    law_text += f.read() + "\n"
-            except Exception as e:
-                print(f"⚠️ 법령 파일 읽기 실패 ({fpath}):", e)
-
-        # law_context.txt (있으면 사용, 없으면 그냥 넘어감)
-        try:
-            with open('law_context.txt', 'r', encoding='utf-8') as f:
-                law_text = f.read() + "\n" + law_text
-        except FileNotFoundError:
-            print("⚠️ law_context.txt 파일이 없습니다. (무시하고 진행)")
-        except Exception as e:
-            print("⚠️ law_context.txt 읽기 실패:", e)
-
-        # -----------------------------
-        # 4. 프롬프트 조합
-        # -----------------------------
-        full_prompt = f"""
-        {PROMPT_VERIFY_DESIGN}
-
-        [참고 법령]
-        {law_text[:60000]}
-
-        [기준 데이터(JSON)]
-        {standard_json}
         """
 
         parts = [full_prompt]
@@ -741,6 +698,49 @@ def verify_design():
             return jsonify({
                 "error": "GOOGLE_API_KEY 환경변수가 설정되어 있지 않습니다."
             }), 500
+
+        try:
+            model = genai.GenerativeModel(
+                MODEL_NAME,
+                generation_config={"temperature": 0.0}
+            )
+            response = model.generate_content(parts)
+            result_text = response.text.strip()
+
+            # JSON 추출
+            json_match = re.search(r"(\{.*\})", result_text, re.DOTALL)
+            if json_match:
+                clean_json = json_match.group(1)
+                clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
+                result = json.loads(clean_json)
+            else:
+                # JSON 패턴이 없으면 그냥 파싱 시도
+                clean_json = result_text.replace("```", "").strip()
+                result = json.loads(clean_json)
+
+            # 🔴 여기서 하이라이트 HTML 생성해서 result에 추가
+            design_text = result.get("design_ocr_text", "")
+            issues = result.get("issues", [])
+            highlighted_html = make_highlighted_html(design_text, issues)
+            result["design_ocr_highlighted_html"] = highlighted_html
+
+            return jsonify(result)
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print("❌ Gemini 호출/파싱 중 오류:", e)
+            return jsonify({
+                "error": f"AI 분석 중 오류가 발생했습니다: {str(e)}"
+            }), 500
+
+    except Exception as e:
+        # 위에서 예상 못 한 모든 예외는 여기로
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "error": f"서버 내부 오류가 발생했습니다: {str(e)}"
+        }), 500
 
         try:
             model = genai.GenerativeModel(
