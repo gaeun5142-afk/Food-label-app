@@ -847,7 +847,7 @@ def upload_qa():
                 result_text = result_text[:-3]
 
         result_text = result_text.strip()
-@@ -25,10 +870,12 @@
+
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
