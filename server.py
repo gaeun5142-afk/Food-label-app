@@ -617,11 +617,7 @@ def download_standard_excel():
 @app.route('/api/verify-design', methods=['POST'])
 def verify_design():
     print("🕵️‍♂️ 2단계: 디자인 검증 시작...")
-
     try:
-        # -----------------------------
-        # 1. 파일 받기
-        # -----------------------------
         design_file = request.files.get('design_file')
         standard_excel = request.files.get('standard_excel')
         standard_json = request.form.get('standard_data')
@@ -629,13 +625,13 @@ def verify_design():
         if not design_file:
             return jsonify({"error": "디자인 파일이 필요합니다. (design_file)"}), 400
 
-        # -----------------------------
-        # 2. 기준 데이터 로딩 (엑셀 -> JSON)
-        # -----------------------------
-        if standard_excel:
+        # 🔹 엑셀을 올렸을 때만 읽고, 안 올리면 그냥 넘어가기
+        if standard_excel and standard_excel.filename:
             try:
+                excel_bytes = standard_excel.read()
+
                 df_dict = pd.read_excel(
-                    io.BytesIO(standard_excel.read()),
+                    io.BytesIO(excel_bytes),
                     sheet_name=None,
                     engine='openpyxl'
                 )
@@ -643,37 +639,56 @@ def verify_design():
                 first_sheet_name = list(df_dict.keys())[0]
                 first_sheet_df = df_dict[first_sheet_name]
 
-                standard_data = {}
-                if not first_sheet_df.empty:
-                    col = first_sheet_df.columns[0]
-                    if '원재료명' in first_sheet_df.columns:
-                        col = '원재료명'
+                col = "원재료명" if "원재료명" in first_sheet_df.columns else first_sheet_df.columns[0]
 
-                    ingredients_list = (
-                        first_sheet_df[col]
-                        .dropna()
-                        .astype(str)
-                        .tolist()
-                    )
-
-                    standard_data = {
-                        'ingredients': {
-                            'structured_list': ingredients_list,
-                            'continuous_text': ', '.join(ingredients_list)
-                        }
-                    }
-
-                standard_json = json.dumps(
-                    standard_data,
-                    ensure_ascii=False
+                ingredients_list = (
+                    first_sheet_df[col]
+                    .dropna()
+                    .astype(str)
+                    .tolist()
                 )
 
+                standard_data = {
+                    "ingredients": {
+                        "structured_list": ingredients_list,
+                        "continuous_text": ", ".join(ingredients_list),
+                    }
+                }
+                standard_json = json.dumps(standard_data, ensure_ascii=False)
+
             except Exception as e:
-                # 엑셀 읽기 실패해도 명확한 에러 메시지 주기
                 print("❌ 엑셀 읽기 실패:", e)
                 return jsonify({
-                    "error": f"엑셀 파일을 읽는 중 오류가 발생했습니다: {str(e)}"
+                    "error": f"기준 데이터를 읽는 과정에서 문제가 발생했습니다: {str(e)}"
                 }), 400
+
+        # 🔹 여기부터는 기존 코드 그대로 유지
+        law_text = (ALL_LAW_TEXT or "")[:MAX_LAW_CHARS]
+
+        full_prompt = f"""
+
+        {PROMPT_VERIFY_DESIGN}
+
+        [참고 법령]
+
+        {law_text}
+
+        [기준 데이터(JSON)]
+
+        {standard_json}
+
+        """
+
+        parts = [full_prompt]
+
+        design_file.stream.seek(0)
+        design_part = process_file_to_part(design_file)
+        if design_part:
+            parts.append(design_part)
+        else:
+            return jsonify({"error": "디자인 파일을 처리할 수 없습니다."}), 400
+
+        ...
 
         # -----------------------------
         # 3. 법령 텍스트 읽기
