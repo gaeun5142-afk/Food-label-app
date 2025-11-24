@@ -432,6 +432,12 @@ def clean_html_text(text):
     # HTML 엔티티 디코딩 먼저 수행 (예: &lt; → <, &gt; → >, &amp; → &)
     text = unescape(text)
     
+    # HTML 코드 블록 패턴 제거 (예: "<div style=\"margin-top:12px;\">...</div>")
+    # 여러 줄에 걸친 HTML 코드도 제거
+    text = re.sub(r'<div[^>]*>.*?</div>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'<ul[^>]*>.*?</ul>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'<li[^>]*>.*?</li>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    
     # HTML 태그 완전히 제거 (내용은 유지)
     # 예: "<div>식품등의 표시기준 제X조 위반</div>" → "식품등의 표시기준 제X조 위반"
     text = re.sub(r'<[^>]+>', '', text)
@@ -444,6 +450,14 @@ def clean_html_text(text):
     text = re.sub(r'<li[^>]*>', '', text, flags=re.IGNORECASE)
     text = re.sub(r'</li>', '', text, flags=re.IGNORECASE)
     text = re.sub(r'<[^>]+>', '', text)  # 남은 모든 HTML 태그 제거
+    
+    # HTML 속성 패턴 제거 (예: "style=\"margin-top:12px;\"")
+    text = re.sub(r'style\s*=\s*["\'][^"\']*["\']', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'font-weight\s*:\s*\d+', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'margin[^;]*;?', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'padding[^;]*;?', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'color[^;]*;?', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'font-size[^;]*;?', '', text, flags=re.IGNORECASE)
     
     # 연속된 공백만 정리 (줄바꿈과 내용은 보존)
     text = re.sub(r'[ \t]+', ' ', text)  # 탭과 공백만 정리
