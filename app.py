@@ -34,53 +34,119 @@ if "user" not in st.session_state:
 if "login_error" not in st.session_state:
     st.session_state["login_error"] = None
 
+# 회원가입용 상태 추가
+if "signup_error" not in st.session_state:
+    st.session_state["signup_error"] = None
+
+if "signup_success" not in st.session_state:
+    st.session_state["signup_success"] = None
+
 
 def show_login_page():
     # 🔒 자물쇠 이모지
-    st.title("🔒 바른식품표시 로그인")
+    st.title("🔒 바른식품표시 로그인 / 회원가입")
 
-    # 이전 에러 메시지 표시 (한 번만)
+    # 이전 에러/성공 메시지 표시 (한 번만)
     if st.session_state["login_error"]:
         st.error(st.session_state["login_error"])
         st.session_state["login_error"] = None  # 표시 후 초기화
 
-    email = st.text_input("이메일", key="login_email")
-    password = st.text_input("비밀번호", type="password", key="login_password")
+    if st.session_state["signup_error"]:
+        st.error(st.session_state["signup_error"])
+        st.session_state["signup_error"] = None  # 표시 후 초기화
 
-    # 버튼 눌렀을 때만 처리
-    if st.button("로그인"):
-        if not email or not password:
-            st.session_state["login_error"] = "이메일과 비밀번호를 모두 입력해 주세요."
-            st.rerun()
-            return
+    if st.session_state["signup_success"]:
+        st.success(st.session_state["signup_success"])
+        st.session_state["signup_success"] = None  # 표시 후 초기화
 
-        try:
-            # Supabase 로그인
-            res = supabase.auth.sign_in_with_password(
-                {"email": email, "password": password}
-            )
+    # 🔹 로그인 / 회원가입 탭
+    tab_login, tab_signup = st.tabs(["로그인", "회원가입"])
 
-            user = getattr(res, "user", None)
+    # ------------------
+    # 로그인 탭
+    # ------------------
+    with tab_login:
+        email = st.text_input("이메일", key="login_email")
+        password = st.text_input("비밀번호", type="password", key="login_password")
 
-            # 로그인 실패 처리
-            if user is None:
-                st.session_state["login_error"] = "로그인 실패: 이메일/비밀번호를 확인해 주세요."
+        # 버튼 눌렀을 때만 처리
+        if st.button("로그인"):
+            if not email or not password:
+                st.session_state["login_error"] = "이메일과 비밀번호를 모두 입력해 주세요."
                 st.rerun()
                 return
 
-            # 로그인 성공 처리 (메시지 없이 바로 리다이렉트)
-            st.session_state["user"] = {
-                "id": user.id,
-                "email": user.email
-            }
-            st.session_state["login_error"] = None  # 에러 초기화
-            st.rerun()
+            try:
+                # Supabase 로그인
+                res = supabase.auth.sign_in_with_password(
+                    {"email": email, "password": password}
+                )
 
-        except Exception as e:
-            # Supabase 내부 오류 또는 비번 불일치
-            st.session_state["login_error"] = "로그인 실패: 이메일/비밀번호를 확인해 주세요."
-            print("로그인 오류:", e)
-            st.rerun()
+                user = getattr(res, "user", None)
+
+                # 로그인 실패 처리
+                if user is None:
+                    st.session_state["login_error"] = "로그인 실패: 이메일/비밀번호를 확인해 주세요."
+                    st.rerun()
+                    return
+
+                # 로그인 성공 처리 (메시지 없이 바로 리다이렉트)
+                st.session_state["user"] = {
+                    "id": user.id,
+                    "email": user.email
+                }
+                st.session_state["login_error"] = None  # 에러 초기화
+                st.rerun()
+
+            except Exception as e:
+                # Supabase 내부 오류 또는 비번 불일치
+                st.session_state["login_error"] = "로그인 실패: 이메일/비밀번호를 확인해 주세요."
+                print("로그인 오류:", e)
+                st.rerun()
+
+    # ------------------
+    # 회원가입 탭
+    # ------------------
+    with tab_signup:
+        signup_email = st.text_input("이메일", key="signup_email")
+        signup_password = st.text_input("비밀번호", type="password", key="signup_password")
+        signup_password2 = st.text_input("비밀번호 확인", type="password", key="signup_password2")
+
+        if st.button("회원가입"):
+            # 기본 체크
+            if not signup_email or not signup_password or not signup_password2:
+                st.session_state["signup_error"] = "이메일과 비밀번호를 모두 입력해 주세요."
+                st.rerun()
+                return
+
+            if signup_password != signup_password2:
+                st.session_state["signup_error"] = "비밀번호가 서로 다릅니다."
+                st.rerun()
+                return
+
+            try:
+                # Supabase 회원가입
+                res = supabase.auth.sign_up({
+                    "email": signup_email,
+                    "password": signup_password,
+                })
+
+                user = getattr(res, "user", None)
+
+                if user is None:
+                    # 이미 존재하는 이메일 등
+                    st.session_state["signup_error"] = "회원가입에 실패했습니다. 이미 가입된 이메일인지 확인해 주세요."
+                    st.rerun()
+                    return
+
+                # 성공 메시지 (로그인은 별도로 하도록 안내)
+                st.session_state["signup_success"] = "회원가입이 완료되었습니다. 이제 로그인 탭에서 로그인해 주세요."
+                st.rerun()
+
+            except Exception as e:
+                print("회원가입 오류:", e)
+                st.session_state["signup_error"] = "회원가입 중 오류가 발생했습니다. 다시 시도해 주세요."
+                st.rerun()
 
 
 def show_top_bar():
@@ -94,6 +160,8 @@ def show_top_bar():
         if st.button("로그아웃"):
             st.session_state["user"] = None
             st.session_state["login_error"] = None
+            st.session_state["signup_error"] = None
+            st.session_state["signup_success"] = None
             st.rerun()
 
 
