@@ -26,9 +26,26 @@ def clean_violation_text(violation_text):
     if not violation_text:
         return violation_text
     
-    # 괄호와 그 안의 내용을 제거 (예: "제4조제1항제1호다목 위반 (소비자 안전을 위한 주의사항 부실 기재)" -> "제4조제1항제1호다목 위반")
-    # 정규표현식: 괄호와 그 안의 모든 내용 제거
-    cleaned = re.sub(r'\s*\([^)]*\)', '', violation_text)
+    cleaned = violation_text
+    
+    # 여러 번 반복하여 중첩된 괄호도 모두 제거
+    # 영문 괄호 (), 한글 괄호 （）, 다양한 형태의 괄호 처리
+    while True:
+        # 영문 괄호 제거
+        new_cleaned = re.sub(r'\s*\([^()]*\)', '', cleaned)
+        # 한글 괄호 제거
+        new_cleaned = re.sub(r'\s*（[^）]*）', '', new_cleaned)
+        # 더 이상 제거할 괄호가 없으면 종료
+        if new_cleaned == cleaned:
+            break
+        cleaned = new_cleaned
+    
+    # "위반" 뒤에 나오는 모든 내용 제거 (괄호가 없어도 설명이 있을 수 있음)
+    # "위반"이라는 단어를 찾아서 그 뒤의 모든 내용 제거
+    match = re.search(r'위반', cleaned)
+    if match:
+        cleaned = cleaned[:match.end()].strip()
+    
     # 연속된 공백 제거
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
     return cleaned
