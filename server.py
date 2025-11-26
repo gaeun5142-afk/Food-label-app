@@ -272,13 +272,24 @@ def clean_html_text(text):
     # HTML 엔티티 디코드
     text = html.unescape(str(text))
     
-    # HTML 태그 완전히 제거 (여러 줄 포함)
-    text = re.sub(r'<div[^>]*>[\s\S]*?</div>', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'<ul[^>]*>[\s\S]*?</ul>', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'<li[^>]*>[\s\S]*?</li>', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'<[^>]+>', '', text)  # 남은 모든 HTML 태그 제거
+    # 모든 HTML 태그 제거 (태그만 제거, 내용은 보존)
+    # 여러 번 반복하여 중첩된 태그도 모두 제거
+    prev_text = ""
+    while prev_text != text:
+        prev_text = text
+        # 모든 HTML 태그 제거
+        text = re.sub(r'<[^>]+>', '', text)
     
-    # 연속 공백 정리
+    # HTML 속성 패턴 제거 (혹시 남아있을 수 있는 경우)
+    text = re.sub(r'style\s*=\s*["\'][^"\']*["\']', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'class\s*=\s*["\'][^"\']*["\']', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'font-weight\s*:\s*\d+', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'margin[^;]*;?', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'padding[^;]*;?', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'color[^;]*;?', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'font-size[^;]*;?', '', text, flags=re.IGNORECASE)
+    
+    # 연속 공백 정리 (줄바꿈도 공백으로 처리)
     text = re.sub(r'\s+', ' ', text)
     
     return text.strip()
