@@ -3,6 +3,7 @@ import requests
 from PIL import Image
 import io
 import json
+import re
 from supabase import create_client, Client
 
 # -----------------------------
@@ -16,6 +17,21 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # Flask 서버 주소 (Render)
 # -----------------------------
 FLASK_API_URL = "https://food-label-app-4.onrender.com"  # Render에 만든 Flask 서버 URL
+
+# -----------------------------
+# 위반 사항 정리 함수 (괄호와 설명 제거)
+# -----------------------------
+def clean_violation_text(violation_text):
+    """위반 사항 텍스트에서 괄호와 그 안의 설명을 제거하고 법률 조항만 반환"""
+    if not violation_text:
+        return violation_text
+    
+    # 괄호와 그 안의 내용을 제거 (예: "제4조제1항제1호다목 위반 (소비자 안전을 위한 주의사항 부실 기재)" -> "제4조제1항제1호다목 위반")
+    # 정규표현식: 괄호와 그 안의 모든 내용 제거
+    cleaned = re.sub(r'\s*\([^)]*\)', '', violation_text)
+    # 연속된 공백 제거
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    return cleaned
 
 # -----------------------------
 # Streamlit 기본 설정
@@ -37,7 +53,6 @@ if "login_error" not in st.session_state:
 # ➕ 현재 화면 상태 (login / signup / main)
 if "page" not in st.session_state:
     st.session_state["page"] = "login"
-
 
 # -----------------------------
 # 로그인 페이지
@@ -65,7 +80,6 @@ def show_login_page():
             res = supabase.auth.sign_in_with_password(
                 {"email": email, "password": password}
             )
-
             user = getattr(res, "user", None)
 
             # 로그인 실패 처리
@@ -90,12 +104,10 @@ def show_login_page():
             st.rerun()
 
     st.write("---")
-
     # ➕ 회원가입으로 이동 버튼
     if st.button("➡️ 회원가입"):
         st.session_state["page"] = "signup"
         st.rerun()
-
 
 # -----------------------------
 # 회원가입 페이지
@@ -126,7 +138,6 @@ def show_signup_page():
         st.session_state["page"] = "login"
         st.rerun()
 
-
 # -----------------------------
 # 상단바 (로그인 후)
 # -----------------------------
@@ -143,7 +154,6 @@ def show_top_bar():
             st.session_state["login_error"] = None
             st.session_state["page"] = "login"
             st.rerun()
-
 
 # -----------------------------
 # 메인 콘텐츠 (로그인 후)
@@ -170,6 +180,7 @@ def show_main_app():
     # 2. 자동 변환 (QA → 자동 라벨)
     elif menu == "자동 변환":
         st.title("📄 자동 변환 (QA 기반 표시사항 생성)")
+
         uploaded_files = st.file_uploader(
             "QA 자료 업로드 (여러 파일 가능)",
             type=["pdf", "jpg", "jpeg", "png", "xlsx", "xls"],
@@ -181,6 +192,7 @@ def show_main_app():
                 st.error("파일을 업로드하세요.")
             else:
                 files = [("qa_files", (f.name, f.read(), f.type)) for f in uploaded_files]
+
                 with st.spinner("AI가 QA 자료를 분석 중입니다..."):
                     try:
                         response = requests.post(
@@ -204,9 +216,11 @@ def show_main_app():
     # 3. 오류 자동체크
     elif menu == "오류 자동체크":
         st.title("🔍 오류 자동체크 ")
+
         standard_excel = st.file_uploader(
             "📘 기준데이터 (Excel / PDF)", type=["xlsx", "xls", "pdf"]
         )
+
         design_file = st.file_uploader(
             "🖼️ 디자인 파일 (PDF / 이미지)",
             type=["pdf", "jpg", "jpeg", "png"],
@@ -223,6 +237,7 @@ def show_main_app():
                         design_file.type,
                     )
                 }
+
                 if standard_excel:
                     files["standard_excel"] = (
                         standard_excel.name,
@@ -242,14 +257,15 @@ def show_main_app():
                     else:
                         if response.status_code == 200:
                             result = response.json()
+
                             st.success("검사 완료!")
 
                             # -----------------------
                             # 1) AI 정밀 분석 결과 (하이라이트)
                             # -----------------------
                             st.subheader("🔎 AI 정밀 분석 결과 (하이라이트)")
-                            highlight_html = result.get("design_ocr_highlighted_html")
 
+                            highlight_html = result.get("design_ocr_highlighted_html")
                             if highlight_html:
                                 st.markdown(
                                     """
@@ -271,7 +287,10 @@ def show_main_app():
                             score = result.get("score", "N/A")
                             law = result.get("law_compliance", {})
                             status_raw = (law or {}).get("status", "")
-                            violations = (law or {}).get("violations", [])
+
+                            # 위반 사항 정리 (괄호와 설명 제거)
+                            violations_raw = (law or {}).get("violations", [])
+                            violations = [clean_violation_text(v) for v in violations_raw]
 
                             if status_raw.lower() == "compliant":
                                 badge_color = "#2e7d32"
@@ -337,6 +356,7 @@ def show_main_app():
                               {violations_html}
                             </div>
                             """
+
                             st.markdown(report_html, unsafe_allow_html=True)
 
                             st.markdown("---")
@@ -345,8 +365,8 @@ def show_main_app():
                             # 3) 상세 문제 목록 (카드 스타일)
                             # -----------------------
                             st.subheader("📌 상세 문제 목록")
-                            issues = result.get("issues", [])
 
+                            issues = result.get("issues", [])
                             if not issues:
                                 st.write("발견된 문제가 없습니다. 👍")
                             else:
@@ -383,6 +403,7 @@ def show_main_app():
                                       </div>
                                     </div>
                                     """
+
                                     st.markdown(card_html, unsafe_allow_html=True)
 
                         else:
@@ -393,20 +414,25 @@ def show_main_app():
     # 4. 식품 관련 사이트
     elif menu == "식품 관련 사이트":
         st.title("🔗 식품 관련 사이트 모음")
+
         st.markdown(
             """
             ### 📌 유용한 링크
+
             - **식약처 식품안전나라**  
               https://www.foodsafetykorea.go.kr  
+
             - **식품 표시 기준 고시**  
               https://www.foodsafetykorea.go.kr/foodcode/04_03.jsp  
+
             - **식품 영양성분 DB**  
               https://koreanfood.rda.go.kr/kfi/fct/fctList  
+
             - **부정불량식품 신고센터 (1399)**  
               https://www.mfds.go.kr
+
             """
         )
-
 
 # -----------------------------
 # 앱 진입점
@@ -422,6 +448,6 @@ def main():
         # 로그인 후 메인 앱
         show_main_app()
 
-
 if __name__ == "__main__":
     main()
+
