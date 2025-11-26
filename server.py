@@ -8,9 +8,6 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 import google.generativeai as genai
 import PIL.Image
-import PIL.ImageEnhance
-import re
-from html import unescape
 
 # --- 설정 및 초기화 ---
 load_dotenv()
@@ -24,9 +21,8 @@ if not GOOGLE_API_KEY:
 else:
     genai.configure(api_key=GOOGLE_API_KEY)
 
-# Gemini 모델 설정
-# MODEL_NAME = 'gemini-1.5-flash'  # <-- 기존
-MODEL_NAME = 'gemini-1.5-pro'    # <-- 변경 (속도는 느리지만 인식률은 훨씬 높음)
+# Gemini 모델 설정 (기본값, 자동 감지로 덮어씌워질 수 있음)
+MODEL_NAME = 'gemini-1.5-flash'
 
 # 모델 사용 가능 여부 확인 함수
 def check_available_models():
@@ -223,156 +219,44 @@ PROMPT_CREATE_STANDARD = """
 """
 
 # 2. 디자인 검증용 (정답지 vs 디자인PDF)
-# server.py 수정본
-
 PROMPT_VERIFY_DESIGN = """
-당신은 대한민국 최고의 [식품표시사항 정밀 감사 AI]이자 감정 없는 [자동 채점기]입니다.
-제공된 [Standard(기준서)]와 [Design(디자인 이미지 - 식품표시사항 영역만 크롭됨)]을 1:1 정밀 대조하여, 아래 규칙에 따라 냉철하게 채점하세요.
+당신은 식품표시사항 감사관이자 법률 전문가입니다.
+[기준 데이터(Standard)]와 [디자인 시안(Design)]을 비교하여 오류를 검출하세요.
 
-**중요**: Design 이미지는 이미 식품표시사항 영역만 크롭되어 제공됩니다. 
-브랜드 로고, 제품 사진, 조리법 등은 이미 제거되었으므로, 식품표시사항 텍스트에만 집중하세요.
+[입력]
+1. **Standard**: 앞서 생성된 완벽한 표시사항 정답지
+2. **Design**: 검수할 실제 포장지 디자인 파일 (PDF/이미지)
+3. **법령**: 식품 표시 관련 법령
 
-[감점 기준표 (총점 100점에서 시작)]
-기본 100점에서 아래 오류가 발견될 때마다 점수를 차감하세요. (최하 0점)
+[검증 항목]
+1. **순서 위반**: 원재료 나열 순서가 Standard(배합비 순)와 다른지 확인.
+2. **내용 누락/오기**: 
+    - Standard에 있는 알레르기 문구가 Design에 있는가?
+    - 원재료의 상세 내역(괄호 안 내용)이 일치하는가?
+    - 원산지 표기가 정확한가?
+3. **법률 위반**: 법령에 명시된 의무사항이 누락되었거나 잘못 표기되었는지 확인.
+4. **오탈자**: 단순 글자 오류 확인.
 
-1. **원재료명 오류 (-5점/건)**:
-   - Standard(엑셀)에 있는 원재료가 Design(이미지)에 없거나 순서가 다름.
-   - 함량(%) 숫자가 0.1%라도 다름. (예: 70.6% vs 70.5%)
-2. **영양성분 오류 (-5점/건)**:
-   - 나트륨, 탄수화물, 당류 등의 수치 또는 단위(g, mg) 불일치.
-   - 비율(%) 숫자가 다름.
-3. **법적 의무 문구 누락 (-10점/건)**:
-   - "소비기한" (유통기한 아님) 표기 여부.
-   - "부정 불량식품 신고는 국번없이 1399" 표기 여부.
-   - 알레르기 유발물질 별도 표시란 유무.
-   - 포장재질 및 분리배출 마크 유무.
-4. **비현실적 수치 오류 (-5점/건)**:
-   - 함량이 100%를 초과하는 경우 (예: "221%", "150%")
-   - 비현실적으로 큰 수치 (예: "나트륨 50000mg")
-   - 날짜 형식 오류 (예: "13월", "32일")
-5. **디자인/표기 오탈자 (-3점/건)**:
-   - 명백한 철자 오류 (예: "제조벙법" → "제조방법")
-   - 단위 표기 오류 (예: "10Kg" → "10 kg", 단위 누락)
-   - 부자연스러운 공백 (예: "보관방 법" → "보관방법")
-6. **단순 오타 (-2점/건)**:
-   - 괄호 위치 등 경미한 차이.
-
-[분석 프로세스 - 단계별 수행]
-
-1. **구조화 (Structuring)**:
-   - Standard 데이터(엑셀)를 [제품명, 식품유형, 내용량, 원재료명, 영양정보, 보관방법, 포장재질, 품목보고번호] 항목별로 분류하세요.
-   - Design 이미지는 이미 식품표시사항 영역만 크롭되어 제공되므로, 이 영역의 텍스트만 OCR하여 동일한 항목들을 찾아내어 1:1 매칭 준비를 하세요.
-   - **무시할 것**: 브랜드 로고, 제품 사진, 조리법, 홍보 문구는 이미 제거되었으므로 신경쓰지 마세요.
-
-2. **정밀 대조 (Cross-Checking)**:
-   - **(1) 원재료명 검증 (가장 중요)**: 
-     Standard의 원재료 목록 순서와 함량(%)이 Design에 정확히 기재되었는지 확인하세요.
-     * 띄어쓰기, 괄호 위치, 특수문자 하나라도 다르면 '오류'입니다.
-     * Standard에 함량이 없으면 Design에도 함량이 없어야 합니다.
-     * 미세한 오타도 감지하세요 (예: "전반가공품" vs "전분가공품", "양파221%" vs "양파2.21%")
-   - **(2) 영양정보 숫자 검증**: 
-     나트륨, 탄수화물, 당류 등 모든 수치와 단위(g, mg, %)가 일치하는지 확인하세요.
-   - **(3) 법적 의무사항 검증**: 
-     알레르기 유발물질 표시, "소비기한" 문구, 분리배출 마크 등이 법규대로 있는지 확인하세요.
-     **중요**: 법률 위반 사항을 발견하면 반드시 관련 법령 조항을 명시하세요.
-     예: "식품등의 표시·광고에 관한 법률 제5조 제1항", "식품등의 표시기준 제3조 제2항" 등
-
-3. **Step 3: Verdict (판단) - 3가지 오류 유형 모두 적극 감지**:
-   
-   **3-1. 법령 위반 감지 (Legal Compliance)**
-   - 법령에 명시된 필수 표기사항 누락 및 위반 여부를 철저히 검증하세요.
-   - 관련 법령 조항을 반드시 명시하세요.
-   - **법령 위반 보고 형식**: "식품등의 표시기준 [별지1] 1.바.1)가) 원재료명은 많이 사용한 순서에 따라 표시해야 하며, 중복 표기는 정확성을 저해합니다." 형식으로 작성하세요.
-   - 법령 조항 번호와 위반 내용을 함께 포함한 완전한 문장으로 작성하세요.
-   
-   **3-2. 비현실적 수치 및 논리 오류 감지 (Logical Error) - 적극 보고**
-   - **함량 오류**: 원재료 함량이 100%를 초과하거나 비현실적인 수치인 경우를 **반드시** 찾으세요.
-     * 예: "어묵 221%" → "2.21%" 또는 "22.1%"의 오타일 가능성이 높음 → 'violation' 또는 'typo'로 보고
-     * 예: "나트륨 50000mg" → 단위 오타 또는 소수점 누락 가능성 → 'typo'로 보고
-   - **날짜 오류**: 유통기한이나 제조일자가 존재할 수 없는 날짜(예: 13월, 32일)이거나 형식이 잘못된 경우를 찾으세요.
-   - **논리적 모순**: 영양정보 계산이 맞지 않거나, 함량 합계가 비정상적인 경우를 찾으세요.
-   
-   **3-3. 디자인/표기 오탈자 감지 (Design & Spelling Error) - 적극 보고**
-   - **명백한 철자 오류**: 문맥상 명확한 단어의 오타를 **반드시** 수정 제안하세요.
-     * 예: "제조벙법" → "제조방법" (명백한 오타)
-     * 예: "보관방 법" → "보관방법" (부자연스러운 공백)
-     * 예: "유통기한ㄴ" → "유통기한" (중복 문자)
-     * 예: "섭취하십시요" → "섭취하십시오" (표준어 규정 위반)
-   - **단위 표기 오류**: 법정 계량 단위나 표준 표기법과 다른 경우를 찾으세요.
-     * 예: "10Kg" → "10 kg" (띄어쓰기 및 소문자 권장)
-     * 예: "나트륨 530" → "나트륨 530 mg" (단위 누락)
-   - **일관성 검증**: 같은 이미지 내에서 동일한 단어가 다르게 표기된 경우를 찾으세요.
-     * 예: 한 곳에서는 "냉장보관", 다른 곳에서는 "냉장 보관"으로 표기된 경우
-
-4. **핀셋 오류 지적 (Pinpoint Reporting)**:
-   - "원재료명이 다릅니다" 같이 뭉뚱그리지 마세요.
-   - **오류가 있는 '단어' 또는 '숫자'만 정확히 잘라내어 `actual` 필드에 넣으세요.**
-   - 예: "L-글루탐산나트륨"이 빠졌다면, 그 위치 주변 텍스트를 `actual`로 잡아 하이라이트 하세요.
-
-[법령 위반 보고 형식]
-
-**법령 위반 사항을 보고할 때는 반드시 다음 형식을 따르세요:**
-- 관련 법령 조항을 먼저 명시하세요.
-- 예: "식품등의 표시기준 [별지1] 1.바.1)가) 원재료명은 많이 사용한 순서에 따라 표시해야 하며, 중복 표기는 정확성을 저해합니다."
-- 예: "식품등의 표시기준 [별지1] 1.아.1)가) 및 1.아.2)가)(5)(가) 영양성분 함량은 총내용량 또는 100g(ml)당으로 정확히 표시되어야 하며, 단위 및 수치 오류는 허용되지 않습니다."
-- 예: "식품등의 표시기준 [도2] 표시사항표시서식도안에 따라 알레르기 유발물질은 별도의 표시란으로 명확히 구분하여 표기해야 합니다."
-
-**violations 배열 형식:**
-각 위반 사항은 다음과 같이 구조화하세요:
+[출력 양식 - JSON]
 {
-  "violation": "위반 내용 설명 (법령 조항 포함)",
-  "law_reference": "관련 법령 조항 (예: 식품등의 표시기준 [별지1] 1.바.1)가))"
-}
-
-[오탈자(Typo) 보고 규칙 - 적극적 감지]
-
-**보고 대상 (적극적 보고 - 반드시 잡아내세요):**
-- "제조벙법", "내용냥", "유통기한ㄴ" 같은 명백한 철자 오류
-- "어묵 221%", "나트륨 50000mg" 같은 비현실적인 수치 오류 (단위 또는 소수점 오타 유력)
-- "보관방 법"과 같이 단어 중간의 부자연스러운 공백
-- 문맥상 오타가 확실한 경우 (예: "섭취하십시오" → "섭취하십시요" 등 표준어 규정 위반 포함)
-- 함량이 100%를 초과하는 경우 (예: "221%", "150%")
-- 날짜 형식 오류 (예: "13월", "32일", "2024-13-01")
-
-**보고 제외 대상 (신중하게 판단):**
-- "카 자전분" 같이 전문적인 원재료명의 띄어쓰기는 신중하게 판단 (확실하지 않으면 제외)
-- 디자인적 요소로 인해 의도적으로 줄바꿈된 경우
-
-[출력 양식 - JSON Only]
-- Markdown 포맷 없이 오직 JSON 데이터만 출력하세요.
-{
-  "design_ocr_text": "디자인 전체 텍스트...",
-  "score": (100점에서 차감된 최종 점수),
-  "law_compliance": {
-    "status": "compliant" | "violation",
-    "violations": [
-      {
-        "violation": "위반 내용 상세 설명 (법령 조항 번호와 위반 내용을 함께 포함한 전체 문장, 예: '식품등의 표시기준 [별지1] 1.바.1)가) 원재료명은 많이 사용한 순서에 따라 표시해야 하며, 중복 표기는 정확성을 저해합니다.')",
-        "law_reference": "관련 법령 조항 번호만 (예: '식품등의 표시기준 [별지1] 1.바.1)가)', '식품등의 표시기준 [별지1] 1.아.1)가) 및 1.아.2)가)(5)(가)' 등)"
-      }
+    "design_ocr_text": "디자인 파일에서 인식한 텍스트",
+    "score": 90, (100점 만점)
+    "law_compliance": {
+        "status": "compliant" | "violation",
+        "violations": ["법률 위반 사항 목록"]
+    },
+    "issues": [
+        {
+            "type": "Critical" (치명적) | "Minor" (경미함) | "Law_Violation" (법률 위반),
+            "location": "위치 (예: 원재료명 3번째 줄)",
+            "issue": "오류 내용 (예: '양파'가 '당근'보다 앞에 와야 함)",
+            "expected": "정답 내용",
+            "actual": "실제 내용",
+            "law_reference": "관련 법령 조항 (법률 위반인 경우)"
+        }
     ]
-  },
-  
-  **중요**: 
-  - violations 배열이 비어있거나 status가 "compliant"이면 법령 위반이 없는 것입니다.
-  - violation 필드에는 법령 조항과 위반 내용을 함께 포함한 전체 문장을 작성하세요.
-  - 예: "식품등의 표시기준 [별지1] 1.바.1)가) 원재료명은 많이 사용한 순서에 따라 표시해야 하며, 중복 표기는 정확성을 저해합니다."
-  "issues": [
-    {
-      "type": "Critical" (내용 불일치) | "Minor" (단순 오타) | "Law_Violation" (법률 위반) | "Logical_Error" (비현실적 수치/논리 오류) | "Spelling_Error" (명백한 철자 오류),
-      "location": "항목명 (예: 영양정보)",
-      "issue": "오류 상세 설명",
-      "expected": "기준서 데이터",
-      "actual": "디자인에서 발견된 틀린 텍스트 (하이라이트용)",
-      "suggestion": "수정 제안",
-      "law_reference": "관련 법령 조항 (예: 식품등의 표시·광고에 관한 법률 제5조, 식품등의 표시기준 제3조 제1항 등) - 법률 위반인 경우 필수"
-    }
-  ]
 }
 """
-
-
-
 
 
 # --- 파일 처리 함수들 ---
@@ -393,182 +277,9 @@ def process_file_to_part(file_storage):
             print(f"엑셀 변환 실패: {e}")
             return None
 
-    # [수정됨] 이미지 파일: 강제 보정 제거하고 원본 그대로 사용
-    # Gemini 1.5는 원본 컬러 이미지를 더 잘 인식합니다.
+    # 이미지나 PDF는 그대로 전달
+    # Gemini는 image/jpeg, image/png, application/pdf 등을 지원함
     return {"mime_type": mime_type, "data": file_data}
-
-
-def clean_html_text(text):
-    """HTML 태그와 HTML 코드를 완전히 제거하고 텍스트 내용(법령 문구 포함)만 유지"""
-    if not isinstance(text, str):
-        return text
-    
-    # HTML 엔티티 디코딩 먼저 수행 (예: &lt; → <, &gt; → >, &amp; → &)
-    text = unescape(text)
-    
-    # HTML 코드 블록 패턴 제거 (예: "<div style=\"margin-top:12px;\">...</div>")
-    # 여러 줄에 걸친 HTML 코드도 제거
-    text = re.sub(r'<div[^>]*>.*?</div>', '', text, flags=re.DOTALL | re.IGNORECASE)
-    text = re.sub(r'<ul[^>]*>.*?</ul>', '', text, flags=re.DOTALL | re.IGNORECASE)
-    text = re.sub(r'<li[^>]*>.*?</li>', '', text, flags=re.DOTALL | re.IGNORECASE)
-    
-    # HTML 태그 완전히 제거 (내용은 유지)
-    # 예: "<div>식품등의 표시기준 제X조 위반</div>" → "식품등의 표시기준 제X조 위반"
-    text = re.sub(r'<[^>]+>', '', text)
-    
-    # HTML 코드 패턴 제거 (예: "<div style=...>", "<ul style=...>" 등)
-    text = re.sub(r'<div[^>]*>', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'</div>', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'<ul[^>]*>', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'</ul>', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'<li[^>]*>', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'</li>', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'<[^>]+>', '', text)  # 남은 모든 HTML 태그 제거
-    
-    # HTML 속성 패턴 제거 (예: "style=\"margin-top:12px;\"")
-    text = re.sub(r'style\s*=\s*["\'][^"\']*["\']', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'font-weight\s*:\s*\d+', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'margin[^;]*;?', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'padding[^;]*;?', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'color[^;]*;?', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'font-size[^;]*;?', '', text, flags=re.IGNORECASE)
-    
-    # 연속된 공백만 정리 (줄바꿈과 내용은 보존)
-    text = re.sub(r'[ \t]+', ' ', text)  # 탭과 공백만 정리
-    text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)  # 3개 이상의 연속 줄바꿈만 2개로
-    
-    return text.strip()
-
-def detect_label_area(image_file):
-    """이미지에서 식품표시사항 영역을 자동으로 감지하고 크롭"""
-    try:
-        image_data = image_file.read()
-        image_file.seek(0)
-        
-        img_pil = PIL.Image.open(io.BytesIO(image_data))
-        original_size = img_pil.size
-        
-        # AI에게 식품표시사항 영역 찾기 요청
-        model = genai.GenerativeModel(MODEL_NAME)
-        
-        detection_prompt = """
-이 이미지는 식품 포장지 디자인입니다.
-이미지에서 **식품표시사항 영역**만 찾아주세요.
-
-식품표시사항 영역은 다음 정보가 포함된 사각형 영역입니다:
-- 제품명, 식품유형, 내용량
-- 원재료명
-- 영양정보
-- 알레르기 정보
-- 제조원 정보
-- 주의사항
-
-**무시할 영역:**
-- 브랜드 로고
-- 제품 사진
-- 조리법/레시피
-- 홍보 문구
-- 장식 요소
-
-JSON 형식으로 응답하세요:
-{
-    "found": true/false,
-    "bbox": {
-        "x1": 왼쪽 상단 X 좌표 (픽셀),
-        "y1": 왼쪽 상단 Y 좌표 (픽셀),
-        "x2": 오른쪽 하단 X 좌표 (픽셀),
-        "y2": 오른쪽 하단 Y 좌표 (픽셀)
-    },
-    "description": "찾은 영역 설명"
-}
-
-식품표시사항 영역을 찾을 수 없으면 "found": false로 응답하세요.
-"""
-        
-        response = model.generate_content([detection_prompt, img_pil])
-        result_text = response.text.strip()
-        
-        # JSON 파싱
-        if result_text.startswith("```json"):
-            result_text = result_text[7:-3]
-        elif result_text.startswith("```"):
-            lines = result_text.split("\n")
-            if lines[0].startswith("```"):
-                result_text = "\n".join(lines[1:-1])
-        
-        detection_result = json.loads(result_text)
-        
-        if detection_result.get("found", False) and "bbox" in detection_result:
-            bbox = detection_result["bbox"]
-            x1 = max(0, int(bbox.get("x1", 0)))
-            y1 = max(0, int(bbox.get("y1", 0)))
-            x2 = min(original_size[0], int(bbox.get("x2", original_size[0])))
-            y2 = min(original_size[1], int(bbox.get("y2", original_size[1])))
-            
-            # 영역 크롭
-            cropped_img = img_pil.crop((x1, y1, x2, y2))
-            print(f"✅ 식품표시사항 영역 감지: ({x1}, {y1}) ~ ({x2}, {y2}), 크기: {cropped_img.size}")
-            
-            # 크롭된 이미지를 바이트로 변환
-            output = io.BytesIO()
-            cropped_img.save(output, format='PNG')
-            output.seek(0)
-            
-            return output, True
-        else:
-            print("⚠️ 식품표시사항 영역을 찾을 수 없어 전체 이미지를 사용합니다.")
-            image_file.seek(0)
-            return image_file, False
-            
-    except Exception as e:
-        print(f"❌ 영역 감지 실패: {e}, 전체 이미지 사용")
-        image_file.seek(0)
-        return image_file, False
-
-def clean_ai_response(data):
-    """AI 응답에서 HTML 태그를 제거하고 정리"""
-    if isinstance(data, dict):
-        cleaned = {}
-        for key, value in data.items():
-            if key == 'violations' and isinstance(value, list):
-                # violations 배열의 각 항목에서 HTML 제거
-                cleaned_violations = []
-                for item in value:
-                    if isinstance(item, dict):
-                        # 객체인 경우
-                        cleaned_item = {}
-                        for k, v in item.items():
-                            if isinstance(v, str):
-                                cleaned_item[k] = clean_html_text(v)
-                            else:
-                                cleaned_item[k] = v
-                        cleaned_violations.append(cleaned_item)
-                    else:
-                        # 문자열인 경우
-                        cleaned_violations.append(clean_html_text(item))
-                cleaned[key] = cleaned_violations
-            elif key == 'issues' and isinstance(value, list):
-                # issues 배열의 각 항목 처리
-                cleaned[key] = []
-                for item in value:
-                    if isinstance(item, dict):
-                        cleaned_item = {}
-                        for k, v in item.items():
-                            cleaned_item[k] = clean_html_text(v) if isinstance(v, str) else v
-                        cleaned[key].append(cleaned_item)
-                    else:
-                        cleaned[key].append(clean_html_text(item) if isinstance(item, str) else item)
-            elif isinstance(value, str):
-                cleaned[key] = clean_html_text(value)
-            elif isinstance(value, (dict, list)):
-                cleaned[key] = clean_ai_response(value)
-            else:
-                cleaned[key] = value
-        return cleaned
-    elif isinstance(data, list):
-        return [clean_ai_response(item) for item in data]
-    else:
-        return clean_html_text(data) if isinstance(data, str) else data
 
 def extract_ingredient_info_from_image(image_file):
     """원재료 표시사항 이미지에서 필요한 정보만 추출"""
@@ -742,10 +453,7 @@ def create_standard():
     print(f"📂 처리 중: 엑셀 1개 + 원재료 이미지 {len(raw_images)}장 (정보 추출 완료)")
 
     try:
-        # [수정할 부분] 창의성(Temperature) 0으로 설정해서 로봇처럼 만들기
-        generation_config = {"temperature": 0.0}
-        model = genai.GenerativeModel(MODEL_NAME, generation_config=generation_config)
-
+        model = genai.GenerativeModel(MODEL_NAME)
         response = model.generate_content(parts)
 
         # JSON 파싱
@@ -908,112 +616,122 @@ def read_standard_excel():
 def verify_design():
     print("🕵️‍♂️ 2단계: 디자인 검증 시작...")
 
-    # 1. 파일 받기
+    # 1. 디자인 파일 (PDF or 이미지)
     design_file = request.files.get('design_file')
+    
+    # 2. 기준 데이터 (엑셀 파일 또는 JSON 문자열)
     standard_excel = request.files.get('standard_excel')
     standard_json = request.form.get('standard_data')
 
     if not design_file:
         return jsonify({"error": "디자인 파일이 필요합니다."}), 400
-
-    # 2. 기준 데이터 로딩 (엑셀 -> JSON)
+    
+    if not standard_excel and not standard_json:
+        return jsonify({"error": "기준 데이터(엑셀 파일 또는 JSON)가 필요합니다."}), 400
+    
+    # 기준 데이터 처리
     if standard_excel:
+        # 엑셀 파일에서 읽기
         try:
             df_dict = pd.read_excel(io.BytesIO(standard_excel.read()), sheet_name=None, engine='openpyxl')
+            
+            if not df_dict:
+                return jsonify({"error": "엑셀 파일이 비어있습니다."}), 400
+            
+            # 첫 번째 시트 가져오기
             first_sheet_name = list(df_dict.keys())[0]
             first_sheet_df = df_dict[first_sheet_name]
-
+            
+            # 간단한 JSON 변환 (원재료명 중심)
+            # 시트 이름에 관계없이 첫 번째 시트 사용
             standard_data = {}
+            
+            # 첫 번째 시트의 첫 번째 컬럼을 원재료명으로 간주
             if not first_sheet_df.empty:
-                # 원재료명 컬럼 찾기 (단순화)
-                col = first_sheet_df.columns[0]
-                if '원재료명' in first_sheet_df.columns: col = '원재료명'
-
-                ingredients_list = first_sheet_df[col].dropna().astype(str).tolist()
-                standard_data = {'ingredients': {'structured_list': ingredients_list,
-                                                 'continuous_text': ', '.join(ingredients_list)}}
-
+                # 첫 번째 컬럼 이름 확인
+                first_column = first_sheet_df.columns[0]
+                
+                # 컬럼 이름이 '원재료명'이거나 첫 번째 컬럼의 데이터를 사용
+                if '원재료명' in first_sheet_df.columns:
+                    ingredients_list = first_sheet_df['원재료명'].dropna().tolist()
+                elif first_column:
+                    # 첫 번째 컬럼의 데이터를 원재료명으로 사용
+                    ingredients_list = first_sheet_df[first_column].dropna().astype(str).tolist()
+                else:
+                    # 첫 번째 행의 모든 데이터를 사용
+                    ingredients_list = first_sheet_df.iloc[:, 0].dropna().astype(str).tolist()
+                
+                if ingredients_list:
+                    standard_data = {
+                        'ingredients': {
+                            'structured_list': ingredients_list,
+                            'continuous_text': ', '.join(ingredients_list)
+                        }
+                    }
+                else:
+                    return jsonify({"error": "엑셀 파일의 첫 번째 시트에 데이터가 없습니다."}), 400
+            else:
+                return jsonify({"error": "엑셀 파일의 첫 번째 시트가 비어있습니다."}), 400
+            
             standard_json = json.dumps(standard_data, ensure_ascii=False)
         except Exception as e:
-            return jsonify({"error": f"엑셀 읽기 실패: {str(e)}"}), 400
+            print(f"❌ 엑셀 파일 읽기 오류: {e}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({"error": f"엑셀 파일 읽기 실패: {str(e)}"}), 400
 
-    # 3. 법령 파일 읽기 (수정됨: 모든 법령 파일 동등하게 로딩)
-    law_text = ""
+    parts = []
+    
+    # 프롬프트 + 법령 정보
+    enhanced_prompt = PROMPT_VERIFY_DESIGN
+    if ALL_LAW_TEXT:
+        enhanced_prompt += f"\n\n--- [참고 법령] ---\n{ALL_LAW_TEXT}\n--- [법령 끝] ---\n"
+    parts.append(enhanced_prompt)
+    
+    parts.append(f"\n--- [기준 데이터(Standard)] ---\n{standard_json}")
 
-    # (1) 현재 폴더의 모든 'law_'로 시작하는 txt 파일 찾기
-    # law_context.txt, law_text_식품위생법.txt 등 모두 포함됨
-    all_law_files = glob.glob('law_*.txt')
+    design_part = process_file_to_part(design_file)
+    if design_part: parts.append(design_part)
 
-    print(f"📚 법령 파일 로딩 중: {len(all_law_files)}개 발견")
-
-    for file_path in all_law_files:
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-                # 각 법령 파일 내용을 명확히 구분해서 합치기
-                law_text += f"\n\n=== [참고 법령: {file_path}] ===\n{content}\n==========================\n"
-        except Exception as e:
-            print(f"⚠️ 법령 파일 읽기 실패 ({file_path}): {e}")
-
-    # 4. AI 프롬프트 조립
-    parts = [f"""
-    {PROMPT_VERIFY_DESIGN}
-
-    [참고 법령]
-    {law_text[:60000]}
-
-    [기준 데이터]
-    {standard_json}
-    """]
-
-    if design_file:
-        # 식품표시사항 영역만 자동으로 감지하고 크롭
-        print("🔍 식품표시사항 영역 자동 감지 중...")
-        cropped_image, is_cropped = detect_label_area(design_file)
-        
-        if is_cropped:
-            print("✂️ 식품표시사항 영역만 크롭하여 사용합니다.")
-            # 크롭된 이미지를 PIL Image로 변환
-            cropped_image.seek(0)
-            cropped_pil = PIL.Image.open(cropped_image)
-            parts.append(cropped_pil)
-        else:
-            print("📄 전체 이미지를 사용합니다.")
-            parts.append(process_file_to_part(design_file))
-
-    # 5. AI 호출 및 결과 처리 (여기가 중요)
     try:
-        # 창의성 0.0 설정 (정규성 확보)
-        model = genai.GenerativeModel(
-            MODEL_NAME,
-            generation_config={"temperature": 0.0}
-        )
-
+        model = genai.GenerativeModel(MODEL_NAME)
         response = model.generate_content(parts)
+
         result_text = response.text.strip()
+        
+        # JSON 코드 블록 제거
+        if result_text.startswith("```json"):
+            result_text = result_text[7:]
+            if result_text.endswith("```"):
+                result_text = result_text[:-3]
+        elif result_text.startswith("```"):
+            lines = result_text.split("\n")
+            if lines[0].startswith("```"):
+                result_text = "\n".join(lines[1:])
+            if result_text.endswith("```"):
+                result_text = result_text[:-3]
+        
+        result_text = result_text.strip()
+        
+        # JSON 파싱 시도
+        try:
+            result = json.loads(result_text)
+        except json.JSONDecodeError as json_err:
+            print(f"❌ JSON 파싱 오류: {json_err}")
+            print(f"응답 텍스트 (처음 1000자): {result_text[:1000]}")
+            print(f"오류 위치: line {json_err.lineno}, column {json_err.colno}")
+            # JSON 수정 시도
+            try:
+                result_text_fixed = result_text.replace(',\n}', '\n}').replace(',\n]', '\n]')
+                result = json.loads(result_text_fixed)
+                print("✅ JSON 수정 후 파싱 성공")
+            except:
+                return jsonify({"error": f"JSON 파싱 실패: {str(json_err)}. 응답의 일부: {result_text[:200]}..."}), 500
 
-        # [강력한 JSON 파싱 로직] 정규표현식으로 JSON만 추출
-        json_match = re.search(r"(\{.*\})", result_text, re.DOTALL)
-
-        if json_match:
-            clean_json = json_match.group(1)
-            # 간단한 쉼표 보정
-            clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
-            result = json.loads(clean_json)
-            # HTML 태그 제거
-            result = clean_ai_response(result)
-            return jsonify(result)
-        else:
-            # JSON 패턴 못 찾으면 원본에서 시도 (혹시 모르니)
-            clean_json = result_text.replace("``````", "").strip()
-            result = json.loads(clean_json)
-            # HTML 태그 제거
-            result = clean_ai_response(result)
-            return jsonify(result)
+        return jsonify(result)
 
     except Exception as e:
         print(f"❌ 검증 오류: {e}")
-        # 상세 에러 로그 출력
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
@@ -1030,7 +748,7 @@ def upload_qa():
     
     if not qa_files or len(qa_files) == 0:
         return jsonify({"error": "QA 자료 파일이 필요합니다."}), 400
-
+    
     # AI에게 보낼 데이터 꾸러미 만들기
     parts = []
     
