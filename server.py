@@ -261,6 +261,61 @@ PROMPT_VERIFY_DESIGN = """
 
 # --- 파일 처리 함수들 ---
 
+def clean_html_text(text):
+    """HTML 태그와 엔티티를 완전히 제거하여 순수 텍스트만 반환"""
+    if not text:
+        return ""
+    
+    import re
+    import html
+    
+    # HTML 엔티티 디코드
+    text = html.unescape(str(text))
+    
+    # HTML 태그 완전히 제거 (여러 줄 포함)
+    text = re.sub(r'<div[^>]*>[\s\S]*?</div>', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'<ul[^>]*>[\s\S]*?</ul>', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'<li[^>]*>[\s\S]*?</li>', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'<[^>]+>', '', text)  # 남은 모든 HTML 태그 제거
+    
+    # 연속 공백 정리
+    text = re.sub(r'\s+', ' ', text)
+    
+    return text.strip()
+
+def clean_ai_response(data):
+    """AI 응답의 모든 문자열 값에서 HTML 태그 제거 (재귀적)"""
+    if isinstance(data, dict):
+        cleaned = {}
+        for key, value in data.items():
+            if key in ['violations', 'issues'] and isinstance(value, list):
+                # violations와 issues 배열 특별 처리
+                cleaned[key] = []
+                for item in value:
+                    if isinstance(item, dict):
+                        cleaned_item = {}
+                        for k, v in item.items():
+                            if isinstance(v, str):
+                                cleaned_item[k] = clean_html_text(v)
+                            else:
+                                cleaned_item[k] = clean_ai_response(v)
+                        cleaned[key].append(cleaned_item)
+                    elif isinstance(item, str):
+                        cleaned[key].append(clean_html_text(item))
+                    else:
+                        cleaned[key].append(clean_ai_response(item))
+            elif isinstance(value, str):
+                cleaned[key] = clean_html_text(value)
+            else:
+                cleaned[key] = clean_ai_response(value)
+        return cleaned
+    elif isinstance(data, list):
+        return [clean_ai_response(item) for item in data]
+    elif isinstance(data, str):
+        return clean_html_text(data)
+    else:
+        return data
+
 def process_file_to_part(file_storage):
     """파일을 Gemini가 이해할 수 있는 Part 객체로 변환"""
     mime_type = file_storage.mimetype
@@ -736,6 +791,9 @@ def verify_design():
             except:
                 return jsonify({"error": f"JSON 파싱 실패: {str(json_err)}. 응답의 일부: {result_text[:200]}..."}), 500
 
+        # HTML 태그 제거
+        result = clean_ai_response(result)
+        
         return jsonify(result)
 
     except Exception as e:
