@@ -344,14 +344,28 @@ def process_file_to_part(file_storage):
             print(f"엑셀 변환 실패: {e}")
             return None
 
-    # 이미지 파일은 PIL.Image 객체로 변환
+    # [NEW] 이미지 파일인 경우: 리사이징만 적용 (화질 보정 X, 크기만 O)
     if mime_type.startswith('image/'):
         try:
             img = PIL.Image.open(io.BytesIO(file_data))
-            return img
+            
+            # 중요: 이미지의 긴 부분이 1500픽셀을 넘지 않게 줄임 (AI 인식엔 충분)
+            max_size = 1500
+            if max(img.size) > max_size:
+                ratio = max_size / max(img.size)
+                new_size = (int(img.width * ratio), int(img.height * ratio))
+                img = img.resize(new_size, PIL.Image.Resampling.LANCZOS)
+                print(f"📉 이미지 리사이징: {new_size}")
+            # 리사이징된 이미지를 바이트로 변환
+            byte_io = io.BytesIO()
+            # 원본 포맷 유지 (없으면 JPEG)
+            fmt = img.format if img.format else 'JPEG'
+            img.save(byte_io, format=fmt, quality=95) # 퀄리티 높게 저장
+            byte_io.seek(0)
+            return {"mime_type": mime_type, "data": byte_io.read()}
         except Exception as e:
-            print(f"⚠️ 이미지 처리 실패: {e}")
-            return None
+            print(f"⚠️ 이미지 처리 실패 (원본 사용): {e}")
+            return {"mime_type": mime_type, "data": file_data}
 
     # PDF 등 기타 파일은 바이너리 데이터로 전달
     return {"mime_type": mime_type, "data": file_data}
@@ -923,4 +937,12 @@ if __name__ == '__main__':
     print("   - QA 자료 업로드 지원")
     from waitress import serve
 
-    serve(app, host='0.0.0.0', port=8080)
+    # [수정] channel_timeout을 늘려주세요 (기본값은 짦음)
+    # connection_limit도 넉넉히 줍니다.
+    serve(
+        app, 
+        host='0.0.0.0', 
+        port=8080,
+        threads=4,              # 동시 처리 개수
+        channel_timeout=600     # 600초(10분) 동안은 응답 없어도 안 끊고 기다림
+    )
