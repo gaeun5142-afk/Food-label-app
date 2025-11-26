@@ -277,8 +277,16 @@ def process_file_to_part(file_storage):
             print(f"엑셀 변환 실패: {e}")
             return None
 
-    # 이미지나 PDF는 그대로 전달
-    # Gemini는 image/jpeg, image/png, application/pdf 등을 지원함
+    # 이미지 파일은 PIL.Image 객체로 변환
+    if mime_type.startswith('image/'):
+        try:
+            img = PIL.Image.open(io.BytesIO(file_data))
+            return img
+        except Exception as e:
+            print(f"⚠️ 이미지 처리 실패: {e}")
+            return None
+
+    # PDF 등 기타 파일은 바이너리 데이터로 전달
     return {"mime_type": mime_type, "data": file_data}
 
 def extract_ingredient_info_from_image(image_file):
