@@ -12,6 +12,7 @@ import PIL.Image
 # --- 설정 및 초기화 ---
 load_dotenv()
 app = Flask(__name__)
+app.config['JSON_AS_ASCII'] = False  # 한글 깨짐 방지
 CORS(app)
 
 # API 키 설정
