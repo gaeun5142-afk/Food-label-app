@@ -24,8 +24,9 @@ if not GOOGLE_API_KEY:
 else:
     genai.configure(api_key=GOOGLE_API_KEY)
 
-# Gemini 모델 설정 (기본값, 자동 감지로 덮어씌워질 수 있음)
-MODEL_NAME = 'gemini-1.5-flash'
+# Gemini 모델 설정
+# MODEL_NAME = 'gemini-1.5-flash'  # <-- 기존
+MODEL_NAME = 'gemini-1.5-pro'    # <-- 변경 (속도는 느리지만 인식률은 훨씬 높음)
 
 # 모델 사용 가능 여부 확인 함수
 def check_available_models():
@@ -392,37 +393,8 @@ def process_file_to_part(file_storage):
             print(f"엑셀 변환 실패: {e}")
             return None
 
-    # [NEW] 이미지 파일인 경우: 선명도 보정 (OCR 정확도 UP)
-    if mime_type.startswith('image/'):
-        try:
-            img = PIL.Image.open(io.BytesIO(file_data))
-
-            # 1. 흑백 변환 (글자 윤곽 강조)
-            img = img.convert('L')
-
-            # 2. 대비(Contrast) 2배 증가
-            enhancer = PIL.ImageEnhance.Contrast(img)
-            img = enhancer.enhance(2.0)
-
-            # 3. 선명도(Sharpness) 1.5배 증가
-            enhancer = PIL.ImageEnhance.Sharpness(img)
-            img = enhancer.enhance(1.5)
-
-            # 보정된 이미지를 다시 바이트로 변환
-            byte_io = io.BytesIO()
-            # 원본 포맷 유지하되, 없으면 JPEG 사용
-            fmt = img.format if img.format else 'JPEG'
-            img.save(byte_io, format=fmt)
-            byte_io.seek(0)
-
-            return {"mime_type": mime_type, "data": byte_io.read()}
-
-        except Exception as e:
-            print(f"⚠️ 이미지 보정 실패 (원본 사용): {e}")
-            # 실패 시 원본 그대로 사용
-            return {"mime_type": mime_type, "data": file_data}
-
-    # PDF 등 기타 파일은 그대로 전달
+    # [수정됨] 이미지 파일: 강제 보정 제거하고 원본 그대로 사용
+    # Gemini 1.5는 원본 컬러 이미지를 더 잘 인식합니다.
     return {"mime_type": mime_type, "data": file_data}
 
 
