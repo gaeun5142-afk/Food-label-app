@@ -1366,12 +1366,12 @@ def upload_qa():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
-
+import os
+from waitress import serve
 if __name__ == '__main__':
     print("🚀 삼진어묵 식품표시사항 완성 플랫폼 V3.0 가동")
     print("   - 원부재료 표시사항 스마트 추출")
     print("   - 법률 검토 기능 통합")
     print("   - QA 자료 업로드 지원")
-    from waitress import serve
-
-    serve(app, host='0.0.0.0', port=8080)
+    port = int(os.environ.get("PORT", 8080))
+    serve(app, host="0.0.0.0", port=port)
