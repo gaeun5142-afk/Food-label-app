@@ -147,9 +147,9 @@ JSON 형식으로만 응답하세요:
 원재료명이 명확하지 않으면 "ingredient_name"을 빈 문자열로 두세요.
 """
 
-# 여기 두 프롬프트는 길어서 r""" ... """ 안에 그대로 너가 쓰던 내용 붙여넣으면 됨
-PROMPT_CREATE_STANDARD = r"""여기에 네가 쓰던 긴 기준데이터 생성 프롬프트 전체"""
-PROMPT_VERIFY_DESIGN = r"""여기에 네가 쓰던 긴 디자인 검증 프롬프트 전체"""
+# 이 두 개에는 네가 쓰던 긴 프롬프트를 r""" ... """ 안에 그대로 붙여 넣어
+PROMPT_CREATE_STANDARD = r"""여기에 '기준데이터 생성' 프롬프트 전체"""
+PROMPT_VERIFY_DESIGN = r"""여기에 '디자인 검증' 프롬프트 전체"""
 
 
 # --- 유틸 함수들 ---
@@ -269,17 +269,17 @@ def extract_ingredient_info_from_image(image_file):
 
         # JSON 코드 블록 제거
         if result_text.startswith("```
+            result_text = result_text[7:]
             if result_text.endswith("```"):
-                result_text = result_text[7:-3]
-            else:
-                result_text = result_text[7:].strip()
+                result_text = result_text[:-3]
         elif result_text.startswith("```
-            parts_split = result_text.split("```", 1)
-            if len(parts_split) > 1:
-                result_text = parts_split[1].strip()
-            if result_text.startswith("json"):
-                result_text = result_text[4:].strip()
+            lines = result_text.split("\n")
+            if lines and lines.startswith("```"):
+                result_text = "\n".join(lines[1:])
+            if result_text.endswith("```
+                result_text = result_text[:-3]
 
+        result_text = result_text.strip()
         return json.loads(result_text)
     except json.JSONDecodeError as e:
         print(f"원재료 정보 JSON 파싱 실패: {e}")
@@ -419,15 +419,15 @@ def create_standard():
         response = MODEL.generate_content(parts)
 
         result_text = response.text.strip()
-        if result_text.startswith("```
+        if result_text.startswith("```json"):
             result_text = result_text[7:]
-            if result_text.endswith("```"):
-                result_text = result_text[:-3]
-        elif result_text.startswith("```
-            lines = result_text.split("\n")
-            if lines.startswith("```"):
-                result_text = "\n".join(lines[1:])
             if result_text.endswith("```
+                result_text = result_text[:-3]
+        elif result_text.startswith("```"):
+            lines = result_text.split("\n")
+            if lines and lines[0].startswith("```
+                result_text = "\n".join(lines[1:])
+            if result_text.endswith("```"):
                 result_text = result_text[:-3]
         
         result_text = result_text.strip()
@@ -489,10 +489,10 @@ def read_standard_excel():
         result = {}
         
         if '제품정보' in df_dict:
-            product_info = df_dict['제품정보'].to_dict('records')
+            product_info = df_dict['제품정보'].to_dict('records')[0]
             result['product_info'] = product_info
         
-        first_sheet_name = list(df_dict.keys())
+        first_sheet_name = list(df_dict.keys())[0]
         first_sheet_df = df_dict[first_sheet_name]
         
         if '원재료명' in df_dict:
@@ -502,13 +502,13 @@ def read_standard_excel():
                 'continuous_text': ', '.join(ingredients_list)
             }
         elif '원재료명_연속텍스트' in df_dict:
-            continuous_text = df_dict['원재료명_연속텍스트']['원재료명_연속텍스트'].iloc
+            continuous_text = df_dict['원재료명_연속텍스트']['원재료명_연속텍스트'].iloc[0]
             result['ingredients'] = {
                 'structured_list': continuous_text.split(', '),
                 'continuous_text': continuous_text
             }
         elif not first_sheet_df.empty:
-            first_column = first_sheet_df.columns
+            first_column = first_sheet_df.columns[0]
             if '원재료명' in first_sheet_df.columns:
                 ingredients_list = first_sheet_df['원재료명'].dropna().tolist()
             else:
@@ -543,7 +543,7 @@ def read_standard_excel():
             result['nutrition_info'] = {'per_100g': per_100g}
         
         if '제조원정보' in df_dict:
-            result['manufacturer'] = df_dict['제조원정보'].to_dict('records')
+            result['manufacturer'] = df_dict['제조원정보'].to_dict('records')[0]
         
         if '주의사항' in df_dict:
             result['precautions'] = df_dict['주의사항']['주의사항'].tolist()
@@ -582,12 +582,12 @@ def verify_design():
             if not df_dict:
                 return jsonify({"error": "엑셀 파일이 비어있습니다."}), 400
             
-            first_sheet_name = list(df_dict.keys())
+            first_sheet_name = list(df_dict.keys())[0]
             first_sheet_df = df_dict[first_sheet_name]
             
             standard_data = {}
             if not first_sheet_df.empty:
-                first_column = first_sheet_df.columns
+                first_column = first_sheet_df.columns[0]
                 if '원재료명' in first_sheet_df.columns:
                     ingredients_list = first_sheet_df['원재료명'].dropna().tolist()
                 elif first_column:
@@ -631,15 +631,15 @@ def verify_design():
         response = MODEL.generate_content(parts)
 
         result_text = response.text.strip()
-        if result_text.startswith("```json"):
+        if result_text.startswith("```
             result_text = result_text[7:]
-            if result_text.endswith("```
-                result_text = result_text[:-3]
-        elif result_text.startswith("```"):
-            lines = result_text.split("\n")
-            if lines[0].startswith("```
-                result_text = "\n".join(lines[1:])
             if result_text.endswith("```"):
+                result_text = result_text[:-3]
+        elif result_text.startswith("```
+            lines = result_text.split("\n")
+            if lines and lines.startswith("```"):
+                result_text = "\n".join(lines[1:])
+            if result_text.endswith("```
                 result_text = result_text[:-3]
         
         result_text = result_text.strip()
@@ -725,15 +725,15 @@ def upload_qa():
         
         result_text = response.text.strip()
         
-        if result_text.startswith("```
+        if result_text.startswith("```json"):
             result_text = result_text[7:]
-            if result_text.endswith("```"):
-                result_text = result_text[:-3]
-        elif result_text.startswith("```
-            lines = result_text.split("\n")
-            if lines.startswith("```"):
-                result_text = "\n".join(lines[1:])
             if result_text.endswith("```
+                result_text = result_text[:-3]
+        elif result_text.startswith("```"):
+            lines = result_text.split("\n")
+            if lines and lines[0].startswith("```
+                result_text = "\n".join(lines[1:])
+            if result_text.endswith("```"):
                 result_text = result_text[:-3]
         
         result_text = result_text.strip()
