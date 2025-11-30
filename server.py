@@ -413,20 +413,7 @@ def create_standard():
         response = MODEL.generate_content(parts)
 
         result_text = response.text.strip()
-        
-        if result_text.startswith("'''
-            result_text = result_text[7:]
-            if result_text.endswith("'''):
-                result_text = result_text[:-3]
-        elif result_text.startswith("'''
-            lines = result_text.split("\n")
-            if lines and lines[0].startswith("'''"):
-                result_text = "\n".join(lines[1:])
-            if result_text.endswith("'''
-                result_text = result_text[:-3]
-        
-        result_text = result_text.strip()
-        
+ 
         try:
             result = json.loads(result_text)
         except json.JSONDecodeError as json_err:
