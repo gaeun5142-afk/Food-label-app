@@ -268,7 +268,7 @@ def extract_ingredient_info_from_image(image_file):
         result_text = response.text.strip()
 
         # JSON 코드 블록 제거
-        if result_text.startswith("```
+      if result_text.startswith("```json"):
             result_text = result_text[7:]
             if result_text.endswith("```"):
                 result_text = result_text[:-3]
