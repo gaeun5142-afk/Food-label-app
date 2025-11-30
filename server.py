@@ -114,7 +114,7 @@ ALL_LAW_TEXT = load_law_texts()
 
 
 # --- 프롬프트 (지시사항) ---
-PROMPT_EXTRACT_INGREDIENT_INFO = """
+PROMPT_EXTRACT_INGREDIENT_INFO = r"""
 이 이미지는 원부재료 표시사항 사진입니다. 
 **필수적으로 추출해야 할 정보만** 추출하세요.
 
@@ -147,9 +147,9 @@ JSON 형식으로만 응답하세요:
 원재료명이 명확하지 않으면 "ingredient_name"을 빈 문자열로 두세요.
 """
 
-PROMPT_CREATE_STANDARD = """(중략)"""  # 질문에 있던 긴 프롬프트 그대로 사용
-PROMPT_VERIFY_DESIGN = """(중략)"""   # 질문에 있던 긴 프롬프트 그대로 사용
-# 실제 코드에서는 위 두 프롬프트 부분을 질문에 작성하신 전체 텍스트로 넣어 주세요.
+# 여기 두 프롬프트는 길어서 r""" ... """ 안에 그대로 너가 쓰던 내용 붙여넣으면 됨
+PROMPT_CREATE_STANDARD = r"""여기에 네가 쓰던 긴 기준데이터 생성 프롬프트 전체"""
+PROMPT_VERIFY_DESIGN = r"""여기에 네가 쓰던 긴 디자인 검증 프롬프트 전체"""
 
 
 # --- 유틸 함수들 ---
@@ -265,21 +265,21 @@ def extract_ingredient_info_from_image(image_file):
         parts = [PROMPT_EXTRACT_INGREDIENT_INFO, img_pil]
         response = MODEL.generate_content(parts)
 
-       result_text = response.text.strip()
+        result_text = response.text.strip()
 
-# JSON 코드 블록 제거
-if result_text.startswith("```
-    result_text = result_text[7:]
-    if result_text.endswith("```"):
-        result_text = result_text[:-3]
-elif result_text.startswith("```
-    lines = result_text.split("\n")
-    if lines.startswith("```"):
-        result_text = "\n".join(lines[1:])
-    if result_text.endswith("```
-        result_text = result_text[:-3]
+        # JSON 코드 블록 제거
+        if result_text.startswith("```
+            if result_text.endswith("```"):
+                result_text = result_text[7:-3]
+            else:
+                result_text = result_text[7:].strip()
+        elif result_text.startswith("```
+            parts_split = result_text.split("```", 1)
+            if len(parts_split) > 1:
+                result_text = parts_split[1].strip()
+            if result_text.startswith("json"):
+                result_text = result_text[4:].strip()
 
-        
         return json.loads(result_text)
     except json.JSONDecodeError as e:
         print(f"원재료 정보 JSON 파싱 실패: {e}")
@@ -398,7 +398,6 @@ def create_standard():
         parts.append(excel_part)
 
     ingredient_info_list = []
-    # 속도 문제를 줄이기 위해 이미지 수를 10장으로 더 줄임
     for img in raw_images[:10]:
         print(f"📷 원재료 이미지 처리 중: {img.filename}")
         ingredient_info = extract_ingredient_info_from_image(img)
@@ -420,15 +419,15 @@ def create_standard():
         response = MODEL.generate_content(parts)
 
         result_text = response.text.strip()
-        if result_text.startswith("```json"):
+        if result_text.startswith("```
             result_text = result_text[7:]
-            if result_text.endswith("```
-                result_text = result_text[:-3]
-        elif result_text.startswith("```"):
-            lines = result_text.split("\n")
-            if lines[0].startswith("```
-                result_text = "\n".join(lines[1:])
             if result_text.endswith("```"):
+                result_text = result_text[:-3]
+        elif result_text.startswith("```
+            lines = result_text.split("\n")
+            if lines.startswith("```"):
+                result_text = "\n".join(lines[1:])
+            if result_text.endswith("```
                 result_text = result_text[:-3]
         
         result_text = result_text.strip()
@@ -490,10 +489,10 @@ def read_standard_excel():
         result = {}
         
         if '제품정보' in df_dict:
-            product_info = df_dict['제품정보'].to_dict('records')[0]
+            product_info = df_dict['제품정보'].to_dict('records')
             result['product_info'] = product_info
         
-        first_sheet_name = list(df_dict.keys())[0]
+        first_sheet_name = list(df_dict.keys())
         first_sheet_df = df_dict[first_sheet_name]
         
         if '원재료명' in df_dict:
@@ -503,13 +502,13 @@ def read_standard_excel():
                 'continuous_text': ', '.join(ingredients_list)
             }
         elif '원재료명_연속텍스트' in df_dict:
-            continuous_text = df_dict['원재료명_연속텍스트']['원재료명_연속텍스트'].iloc[0]
+            continuous_text = df_dict['원재료명_연속텍스트']['원재료명_연속텍스트'].iloc
             result['ingredients'] = {
                 'structured_list': continuous_text.split(', '),
                 'continuous_text': continuous_text
             }
         elif not first_sheet_df.empty:
-            first_column = first_sheet_df.columns[0]
+            first_column = first_sheet_df.columns
             if '원재료명' in first_sheet_df.columns:
                 ingredients_list = first_sheet_df['원재료명'].dropna().tolist()
             else:
@@ -544,7 +543,7 @@ def read_standard_excel():
             result['nutrition_info'] = {'per_100g': per_100g}
         
         if '제조원정보' in df_dict:
-            result['manufacturer'] = df_dict['제조원정보'].to_dict('records')[0]
+            result['manufacturer'] = df_dict['제조원정보'].to_dict('records')
         
         if '주의사항' in df_dict:
             result['precautions'] = df_dict['주의사항']['주의사항'].tolist()
@@ -583,12 +582,12 @@ def verify_design():
             if not df_dict:
                 return jsonify({"error": "엑셀 파일이 비어있습니다."}), 400
             
-            first_sheet_name = list(df_dict.keys())[0]
+            first_sheet_name = list(df_dict.keys())
             first_sheet_df = df_dict[first_sheet_name]
             
             standard_data = {}
             if not first_sheet_df.empty:
-                first_column = first_sheet_df.columns[0]
+                first_column = first_sheet_df.columns
                 if '원재료명' in first_sheet_df.columns:
                     ingredients_list = first_sheet_df['원재료명'].dropna().tolist()
                 elif first_column:
@@ -632,15 +631,15 @@ def verify_design():
         response = MODEL.generate_content(parts)
 
         result_text = response.text.strip()
-        if result_text.startswith("```
+        if result_text.startswith("```json"):
             result_text = result_text[7:]
-            if result_text.endswith("```"):
-                result_text = result_text[:-3]
-        elif result_text.startswith("```
-            lines = result_text.split("\n")
-            if lines.startswith("```"):
-                result_text = "\n".join(lines[1:])
             if result_text.endswith("```
+                result_text = result_text[:-3]
+        elif result_text.startswith("```"):
+            lines = result_text.split("\n")
+            if lines[0].startswith("```
+                result_text = "\n".join(lines[1:])
+            if result_text.endswith("```"):
                 result_text = result_text[:-3]
         
         result_text = result_text.strip()
@@ -682,7 +681,7 @@ def upload_qa():
     
     parts = []
     
-    qa_prompt = """
+    qa_prompt = r"""
 당신은 식품표시사항 작성 전문가입니다.
 제공된 QA 자료를 분석하여 법률을 준수하는 식품표시사항을 작성하세요.
 
@@ -726,15 +725,15 @@ def upload_qa():
         
         result_text = response.text.strip()
         
-        if result_text.startswith("```json"):
+        if result_text.startswith("```
             result_text = result_text[7:]
-            if result_text.endswith("```
-                result_text = result_text[:-3]
-        elif result_text.startswith("```"):
-            lines = result_text.split("\n")
-            if lines[0].startswith("```
-                result_text = "\n".join(lines[1:])
             if result_text.endswith("```"):
+                result_text = result_text[:-3]
+        elif result_text.startswith("```
+            lines = result_text.split("\n")
+            if lines.startswith("```"):
+                result_text = "\n".join(lines[1:])
+            if result_text.endswith("```
                 result_text = result_text[:-3]
         
         result_text = result_text.strip()
