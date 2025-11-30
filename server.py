@@ -268,18 +268,10 @@ def extract_ingredient_info_from_image(image_file):
         result_text = response.text.strip()
 
         # JSON 코드 블록 제거
-      # JSON 코드 블록 제거
-    if result_text.startswith("'''
-       result_text = result_text[7:]
-        if result_text.endswith("''' 
-            result_text = result_text[:-3]
-    elif result_text.startswith("'''"):
-        lines = result_text.split("\n")
-        if lines and lines[0].startswith("'''
-            result_text = "\n".join(lines[1:])
-        if result_text.endswith("'''):
-           result_text = result_text[:-3]
-
+     
+        result_text = response.text.strip()
+        # 여기서 바로 json.loads 시도
+        return json.loads(result_text)
 
         result_text = result_text.strip()
         return json.loads(result_text)
