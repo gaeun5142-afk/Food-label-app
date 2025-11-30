@@ -265,13 +265,20 @@ def extract_ingredient_info_from_image(image_file):
         parts = [PROMPT_EXTRACT_INGREDIENT_INFO, img_pil]
         response = MODEL.generate_content(parts)
 
-        result_text = response.text.strip()
-        if result_text.startswith("```
-            result_text = result_text[7:-3]
-        elif result_text.startswith("```"):
-            result_text = result_text.split("```
-            if result_text.startswith("json"):
-                result_text = result_text[4:].strip()
+       result_text = response.text.strip()
+
+# JSON 코드 블록 제거
+if result_text.startswith("```
+    result_text = result_text[7:]
+    if result_text.endswith("```"):
+        result_text = result_text[:-3]
+elif result_text.startswith("```
+    lines = result_text.split("\n")
+    if lines.startswith("```"):
+        result_text = "\n".join(lines[1:])
+    if result_text.endswith("```
+        result_text = result_text[:-3]
+
         
         return json.loads(result_text)
     except json.JSONDecodeError as e:
