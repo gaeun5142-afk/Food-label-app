@@ -14,6 +14,7 @@ import pandas as pd
 import PIL.Image
 import re
 import html
+import difflib  # 🔹 OCR 의심 판별용
 
 from openai import OpenAI
 
@@ -68,7 +69,6 @@ def call_openai_response(model: str, input_data, *, response_format=None, max_re
             if response_format:
                 kwargs["response_format"] = response_format
 
-            # 필요하면 timeout 옵션도 추가 가능
             resp = client.responses.create(**kwargs)
             return resp
         except Exception as e:
@@ -603,6 +603,65 @@ def filter_issues_by_text_evidence(result, standard_json: str, ocr_text: str):
     return result
 
 
+def mark_possible_ocr_error_issues(result, max_edit_distance: int = 2):
+    """
+    expected / actual 간 문자 차이가 너무 작으면
+    -> 'OCR 오류 가능성' 플래그를 달고, 심각도를 한 단계 낮춘다.
+
+    max_edit_distance: 허용할 최대 편집 거리 (1~2 정도 추천)
+    """
+    if not isinstance(result, dict):
+        return result
+
+    issues = result.get("issues", [])
+    if not isinstance(issues, list):
+        return result
+
+    def approx_distance(a: str, b: str) -> int:
+        """Levenshtein 대신 SequenceMatcher로 근사 거리 계산"""
+        if not a or not b:
+            return 999
+        s = difflib.SequenceMatcher(None, a, b)
+        return int(round((1.0 - s.ratio()) * max(len(a), len(b))))
+
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        expected = str(issue.get("expected", "") or "").strip()
+        actual = str(issue.get("actual", "") or "").strip()
+
+        if not expected or not actual:
+            continue
+
+        dist = approx_distance(expected, actual)
+        min_len = min(len(expected), len(actual))
+
+        # 글자 길이가 너무 짧으면 노이즈라서 제외, 최소 3자 이상만 판단
+        if min_len >= 3 and dist <= max_edit_distance:
+            # OCR 오류 가능성 높음
+            flags = issue.setdefault("flags", [])
+            if "possible_ocr_error" not in flags:
+                flags.append("possible_ocr_error")
+
+            # 심각도 조정: Law_Violation → Minor
+            old_type = issue.get("type", "")
+            if old_type == "Law_Violation":
+                issue["type"] = "Minor"
+
+            # 설명에 한 줄 추가
+            desc = issue.get("issue", "")
+            if "OCR 오류 가능성" not in desc:
+                issue["issue"] = (desc + " (OCR 오류 가능성 있음)").strip()
+
+            print("🟡 OCR 의심 이슈:", {
+                "expected": expected,
+                "actual": actual,
+                "distance": dist
+            })
+
+    return result
+
+
 # =======================
 #  라우트
 # =======================
@@ -786,7 +845,10 @@ def verify_design():
     # 5) hallucination 필터 적용 (expected/actual이 실제 텍스트에 있는지 검증)
     result = filter_issues_by_text_evidence(result, standard_json or "", ocr_text or "")
 
-    # 6) HTML 태그 정리
+    # 6) OCR 의심 이슈 표시 (expected/actual 차이가 매우 작은 경우)
+    result = mark_possible_ocr_error_issues(result, max_edit_distance=2)
+
+    # 7) HTML 태그 정리
     result = clean_ai_response(result)
 
     return jsonify(result)
