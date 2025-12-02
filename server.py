@@ -3,11 +3,13 @@ import json
 import io
 import glob
 import traceback
+import base64
 import pandas as pd
 from flask import Flask, request, jsonify, render_template, send_file
 from flask_cors import CORS
 from dotenv import load_dotenv
 import openai
+from openai import OpenAI
 import PIL.Image
 import re
 import html
@@ -36,10 +38,13 @@ CORS(app)
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 if not OPENAI_API_KEY:
     print("🚨 경고: .env 파일에 OPENAI_API_KEY가 없습니다!")
+    client = None
 else:
     openai.api_key = OPENAI_API_KEY
+    client = OpenAI(api_key=OPENAI_API_KEY)
 
-MODEL_NAME = "gpt-4"
+MODEL_NAME = "gpt-4"          # 텍스트용 모델
+OCR_MODEL_NAME = "gpt-4o-mini"  # 이미지 OCR용 모델 (비전 지원)
 
 def call_openai_chat(messages, temperature=0.4):
     try:
@@ -82,22 +87,75 @@ def clean_ai_response(data):
         return clean_html_text(data)
     return data
 
-# 이미지 OCR 처리
-def ocr_bytes_to_text(image_bytes):
+# -----------------------
+#   ChatGPT OCR 헬퍼
+# -----------------------
+
+def _ocr_via_openai(image_bytes, mime_type="image/png"):
+    """OpenAI 비전 모델을 사용해 OCR 수행 (가능하면 이 결과 사용)."""
+    if client is None:
+        return ""
+
+    try:
+        b64 = base64.b64encode(image_bytes).decode("utf-8")
+        data_url = f"data:{mime_type};base64,{b64}"
+
+        resp = client.chat.completions.create(
+            model=OCR_MODEL_NAME,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "이미지에 보이는 모든 글자를 한 글자도 빼지 말고 그대로 적어 주세요. "
+                                "맞춤법/띄어쓰기/숫자/단위/기호를 고치지 말고, 줄바꿈도 최대한 유지해 주세요."
+                            ),
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": data_url},
+                        },
+                    ],
+                }
+            ],
+            temperature=0.0,
+        )
+
+        message_content = resp.choices[0].message.content
+        # SDK 버전에 따라 content가 str 또는 list일 수 있음
+        if isinstance(message_content, str):
+            return message_content.strip()
+        else:
+            chunks = []
+            for part in message_content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    chunks.append(part.get("text", ""))
+            return "".join(chunks).strip()
+    except Exception as e:
+        print(f"⚠️ OpenAI OCR 실패: {e}")
+        return ""
+
+# 이미지 OCR 처리 (ChatGPT 우선, 실패 시 Tesseract 폴백)
+def ocr_bytes_to_text(image_bytes, mime_type="image/png"):
+    # 1) OpenAI 비전으로 시도
+    text = _ocr_via_openai(image_bytes, mime_type=mime_type)
+    if text:
+        return text
+
+    # 2) 실패 시 Tesseract 폴백 (설치된 경우)
     if not TESSERACT_AVAILABLE:
         return ""
+
     try:
         img = PIL.Image.open(io.BytesIO(image_bytes)).convert("L")  # 그레이스케일
 
         # 🔧 라벨 OCR에 유리하도록 살짝 선명하게 / 이진화
-        # (패키지에 따라 이 부분은 조절 가능)
         img = img.point(lambda x: 0 if x < 160 else 255, '1')  # 단순 임계값
 
         # 🔧 Tesseract 설정
-        # --psm 6 : 한 블록 안에 여러 줄 텍스트
-        # --oem 3 : LSTM 엔진
         config = '--psm 6 --oem 3'
-
         text = pytesseract.image_to_string(
             img,
             lang='kor+eng',
@@ -107,7 +165,6 @@ def ocr_bytes_to_text(image_bytes):
     except Exception as e:
         print("OCR 폴백 실패:", e)
         return ""
-
 
 # 파일을 모델 파트로 변환
 def process_file_to_part(file_storage):
@@ -158,12 +215,12 @@ def extract_ingredient_info_from_image(image_file):
     try:
         image_data = image_file.read()
         image_file.seek(0)
-        img_pil = PIL.Image.open(io.BytesIO(image_data)).convert("RGB")
 
-        if not TESSERACT_AVAILABLE:
-            return {"error": "Tesseract 미설치됨"}
-
-        ocr_text = ocr_text = ocr_bytes_to_text(image_data)
+        # ChatGPT OCR (필요 시 Tesseract 폴백)
+        ocr_text = ocr_bytes_to_text(
+            image_data,
+            mime_type=image_file.mimetype or "image/png"
+        )
 
         messages = [
             {"role": "system", "content": "당신은 식품 표시사항 전문가입니다."},
@@ -342,11 +399,4 @@ if __name__ == '__main__':
         threads=4,
         channel_timeout=600
     )
-
-
-
-
-
-
-
 
