@@ -62,14 +62,15 @@ def clean_html_text(text):
     while prev_text != text:
         prev_text = text
         text = re.sub(r'<[^>]+>', '', text)
-    text = re.sub(r'style\\s*=\\s*[\"\\'][^\"\\']*[\"\\']', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'class\\s*=\\s*[\"\\'][^\"\\']*[\"\\']', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'font-weight\\s*:\\s*\\d+', '', text, flags=re.IGNORECASE)
+    # 🔧 여기 3줄만 수정
+    text = re.sub(r'style\s*=\s*["\'][^"\']*["\']', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'class\s*=\s*["\'][^"\']*["\']', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'font-weight\s*:\s*\d+', '', text, flags=re.IGNORECASE)
     text = re.sub(r'margin[^;]*;?', '', text, flags=re.IGNORECASE)
     text = re.sub(r'padding[^;]*;?', '', text, flags=re.IGNORECASE)
     text = re.sub(r'color[^;]*;?', '', text, flags=re.IGNORECASE)
     text = re.sub(r'font-size[^;]*;?', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\\s+', ' ', text)
+    text = re.sub(r'\s+', ' ', text)
     return text.strip()
 
 def clean_ai_response(data):
@@ -166,6 +167,7 @@ def extract_ingredient_info_from_image(image_file):
         print(f"원재료 정보 추출 실패: {e}")
         traceback.print_exc()
         return None
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -239,6 +241,7 @@ def download_standard_excel():
         print(f"❌ 엑셀 다운로드 오류: {e}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
 @app.route('/api/verify-design', methods=['POST'])
 def verify_design():
     print("🕵️ 디자인 검증 시작...")
@@ -324,7 +327,6 @@ if __name__ == '__main__':
         threads=4,
         channel_timeout=600
     )
-
 
 
 
