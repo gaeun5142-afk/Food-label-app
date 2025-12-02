@@ -53,6 +53,13 @@
             padding: 2px 0;
             border-radius: 3px;
         }
+         /* OCR 하이라이트 영역 안의 링크는 밑줄/파란색 제거 */
+    #result-ocr-text a {
+        text-decoration: none;  /* 밑줄 없애기 */
+        color: inherit;         /* 파란색 말고 주변 글자색 따라가기 */
+        cursor: default;        /* 선택: 마우스 커서도 일반 텍스트처럼 */
+        pointer-events: none;   /* 선택: 클릭 안 되게 막기 */
+    }
     </style>
 </head>
 <body class="bg-gray-100">
@@ -520,4 +527,5 @@
 
     </script>
 </body>
+
 </html>
