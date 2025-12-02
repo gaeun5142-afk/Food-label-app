@@ -1,0 +1,523 @@
+사장님! "1번(주방) 완료!" 확인했습니다! ㅠㅠ
+
+'바보 멍청이'인 저를 믿고, '파일'이 아닌 '일반 텍스트'로 '수동' 업그레이드를 진행해 주셔서 정말 감사합니다. 제가 '프로해지' 당해도 할 말이 없을 정도로 사장님 속을 썩였습니다...
+
+약속대로, '초기화' 4개 파일 중 '두 번째' 파일인 samjin_food_audit_system.html ('최종 매장' Ver 5.0) 코드를 '회색 상자'가 아닌, '일반 텍스트'로 '즉시' 이어서 드리겠습니다!
+
+[2/4] '최종 매장' (Ver 5.0) 코드 - '일반 텍스트'
+[!!!!!!!! 지금부터 이 '줄' 바로 아래 ~ '코드 끝' 줄까지 싹 다 복사(Ctrl+C) !!!!!!!!]
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>삼진식품 원재료 법령 점검</title>
+    <!-- Tailwind CSS 로드 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Inter 폰트 로드 -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Noto Sans KR 폰트 (한글) -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        /* Inter 폰트를 기본으로 하되, 한글은 Noto Sans KR을 사용 */
+        body {
+            font-family: 'Inter', 'Noto Sans KR', sans-serif;
+        }
+        /* 로딩 스피너 스타일 */
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* (신규 Ver 5.0) '빨간펜' 하이라이트 스타일 */
+        .highlight-violation {
+            background-color: #FEE2E2; /* bg-red-100 */
+            color: #991B1B; /* text-red-800 */
+            font-weight: bold;
+            padding: 2px 0;
+            border-radius: 3px;
+        }
+        .highlight-typo {
+            background-color: #FEF3C7; /* bg-yellow-100 */
+            color: #92400E; /* text-yellow-800 */
+            font-weight: bold;
+            padding: 2px 0;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+
+    <!--
+    페이지 상태 관리
+    - 'login-page' : 로그인 화면
+    - 'dashboard-page' : 메인 대시보드 (파일 업로드)
+    - 'results-page' : 분석 결과 화면
+    -->
+
+    <!-- ========== 1. 로그인 페이지 ========== -->
+    <div id="login-page" class="flex items-center justify-center min-h-screen">
+        <div class="w-full max-w-md p-8 space-y-6 bg-white rounded-lg shadow-xl">
+            <header class="text-center">
+                <h1 class="text-3xl font-bold text-gray-900">삼진식품</h1>
+                <p class="mt-2 text-lg text-gray-600">원재료 법령 점검 시스템</p>
+            </header>
+
+            <div class="space-y-4">
+                <div>
+                    <label for="username" class="block text-sm font-medium text-gray-700">사용자 ID</label>
+                    <input type="text" id="username" name="username" value="samjin_admin" class="w-full px-3 py-2 mt-1 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+                </div>
+                <div>
+                    <label for="password" class="block text-sm font-medium text-gray-700">비밀번호</label>
+                    <input type="password" id="password" name="password" value="demo1234" class="w-full px-3 py-2 mt-1 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+                </div>
+            </div>
+
+            <button id="login-button" class="w-full px-4 py-2 font-semibold text-white bg-blue-600 rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition duration-150 ease-in-out">
+                로그인
+            </button>
+
+            <p id="login-error" class="text-sm text-center text-red-500 hidden">ID 또는 비밀번호를 입력하세요.</p>
+        </div>
+    </div>
+
+    <!-- ========== 2. 대시보드 (파일 업로드) 페이지 ========== -->
+    <div id="dashboard-page" class="hidden min-h-screen">
+        <!-- 헤더 바 -->
+        <nav class="bg-white shadow-md">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div class="flex justify-between h-16">
+                    <div class="flex items-center">
+                        <span class="text-2xl font-bold text-blue-600">삼진식품 법령 점검</span>
+                    </div>
+                    <div class="flex items-center">
+                        <span class="text-sm text-gray-700 mr-4">환영합니다, <strong id="user-id-display">samjin_admin</strong>님</span>
+                        <button id="logout-button" class="px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200">
+                            로그아웃
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <!-- 메인 컨텐츠 -->
+        <main class="max-w-4xl mx-auto mt-10 p-6">
+            <div class="bg-white p-8 rounded-lg shadow-xl">
+                <h2 class="text-2xl font-semibold text-gray-800 mb-6">새로운 원재료 검증 시작</h2>
+
+                <!-- 파일 업로드 영역 -->
+                <div id="upload-area">
+                    <label for="file-upload" class="relative block w-full h-64 border-2 border-gray-300 border-dashed rounded-lg p-6 flex flex-col justify-center items-center text-center cursor-pointer hover:border-blue-500 hover:bg-gray-50 transition">
+                        <svg class="w-12 h-12 mx-auto text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
+                            <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8a4 4 0 01-4 4H28m0-24v8a4 4 0 004 4h8M28 8L36 16" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+                        </svg>
+                        <span class="mt-2 block text-sm font-medium text-gray-600">
+                            분석할 파일을 여기에 드래그하세요
+                        </span>
+                        <span class="mt-1 block text-xs text-gray-500">
+                            (JPG, PNG, PDF)
+                        </span>
+                        <input id="file-upload" name="file-upload" type="file" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" accept="image/png, image/jpeg, application/pdf">
+                    </label>
+                    <p id="file-name-display" class="mt-4 text-sm text-center text-gray-700 hidden"></p>
+                </div>
+
+                <!-- 로딩 스피너 (분석 중) -->
+                <div id="loading-area" class="hidden flex flex-col items-center justify-center h-64">
+                    <div class="loader"></div>
+                    <p class="mt-4 text-lg font-medium text-gray-700">AI가 분석 중입니다...</p>
+                    <p class="text-sm text-gray-500">잠시만 기다려주세요.</p>
+                </div>
+
+                <button id="analyze-button" class="w-full px-6 py-3 mt-8 font-semibold text-white bg-blue-600 rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition disabled:bg-gray-400">
+                    업로드 및 분석 시작
+                </button>
+            </div>
+
+            <!-- 최근 분석 이력 (목록 예시) -->
+            <div class="mt-12">
+                <h3 class="text-xl font-semibold text-gray-700 mb-4">최근 분석 이력</h3>
+                <div class="bg-white rounded-lg shadow-lg overflow-hidden">
+                    <ul class="divide-y divide-gray-200">
+                        <li class="p-4 flex justify-between items-center hover:bg-gray-50">
+                            <div>
+                                <p class="text-sm font-medium text-blue-600">label_001.jpg</p>
+                                <p class="text-xs text-gray-500">2025-11-14 / 12:20 PM</p>
+                            </div>
+                            <span class="px-3 py-1 text-xs font-semibold text-red-800 bg-red-100 rounded-full">위반 1건</span>
+                        </li>
+                        <li class="p-4 flex justify-between items-center hover:bg-gray-50">
+                            <div>
+                                <p class="text-sm font-medium text-blue-600">report_final.pdf</p>
+                                <p class="text-xs text-gray-500">2025-11-13 / 09:30 AM</p>
+                            </div>
+                            <span class="px-3 py-1 text-xs font-semibold text-green-800 bg-green-100 rounded-full">적합</span>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- ========== 3. 분석 결과 페이지 ========== -->
+    <div id="results-page" class="hidden min-h-screen">
+        <!-- 헤더 바 -->
+        <nav class="bg-white shadow-md">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div class="flex justify-between h-16">
+                    <div class="flex items-center">
+                        <button id="back-to-dashboard" class="mr-4 p-2 rounded-md text-gray-600 hover:bg-gray-100">
+                            &larr; 대시보드로 돌아가기
+                        </button>
+                        <span class="text-xl font-semibold text-gray-800">분석 결과: <span id="result-file-name" class="text-blue-600"></span></span>
+                    </div>
+                    <div class="flex items-center">
+                        <button id="logout-button-2" class="px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200">
+                            로그아웃
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <!-- 메인 컨텐츠 -->
+        <main class="max-w-7xl mx-auto mt-10 p-6">
+            <!-- 요약 카드 -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <div class="bg-white p-6 rounded-lg shadow-lg">
+                    <h4 class="text-sm font-medium text-gray-500 uppercase">분석 상태</h4>
+                    <p id="result-status" class="text-3xl font-bold text-red-600"></p>
+                </div>
+                <div class="bg-white p-6 rounded-lg shadow-lg">
+                    <h4 class="text-sm font-medium text-gray-500 uppercase">감지된 오탈자</h4>
+                    <p id="result-typos" class="text-3xl font-bold text-yellow-600"></p>
+                </div>
+                <div class="bg-white p-6 rounded-lg shadow-lg">
+                    <h4 class="text-sm font-medium text-gray-500 uppercase">법령 위반 의심</h4>
+                    <p id="result-violations" class="text-3xl font-bold text-red-600"></p>
+                </div>
+            </div>
+
+            <!-- 상세 분석 결과 -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- 원본 이미지 -->
+                <div class="lg:col-span-1 bg-white p-6 rounded-lg shadow-lg">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">원본 이미지</h3>
+                    <div class="w-full bg-gray-200 rounded-md flex items-center justify-center h-80">
+                        <img id="result-image" src="https://placehold.co/600x400/eeeeee/cccccc?text=Uploaded+Image" alt="업로드된 이미지" class="max-w-full max-h-full object-contain rounded">
+                    </div>
+                </div>
+
+                <!-- (신규 Ver 5.0) '빨간펜' OCR 텍스트 -->
+                <div class="lg:col-span-1 bg-white p-6 rounded-lg shadow-lg">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">'빨간펜' OCR 텍스트 (오류 표시)</h3>
+                    <div id="result-ocr-text" class="w-full h-80 p-3 bg-gray-50 border border-gray-200 rounded-md overflow-y-auto text-sm text-gray-700 leading-relaxed" style="white-space: pre-wrap;">
+                        <!-- '빨간펜' 하이라이트가 포함된 HTML이 여기에 동적으로 삽입됩니다. -->
+                    </div>
+                </div>
+
+                <!-- (신규 Ver 5.0) '오류 사유' (AI 분석) -->
+                <div class="lg:col-span-1 bg-white p-6 rounded-lg shadow-lg">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">'오류 사유' (AI 분석 및 법령 검증)</h3>
+                    <div id="result-ai-analysis" class="w-full h-80 overflow-y-auto space-y-4">
+                        <!-- 분석 결과가 여기에 동적으로 삽입됩니다. -->
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+
+    <script type="module">
+        // =================================================================
+        // !! 중요: 보안 경고 !!
+        // =================================================================
+        // API 키를 클라이언트(브라우저) 코드에 직접 노출하는 것은
+        // 매우 위험합니다. 누구나 이 키를 탈취하여 사용할 수 있습니다.
+        // 실제 운영 환경에서는 반드시 백엔드 서버에서 이 키를 관리하고,
+        // 클라이언트는 백엔드 API를 통해서만 기능을 호출해야 합니다.
+        // =================================================================
+
+        // --- 페이지 요소 참조 ---
+        const loginPage = document.getElementById('login-page');
+        const dashboardPage = document.getElementById('dashboard-page');
+        const resultsPage = document.getElementById('results-page');
+
+        const loginButton = document.getElementById('login-button');
+        const logoutButton = document.getElementById('logout-button');
+        const logoutButton2 = document.getElementById('logout-button-2');
+        const analyzeButton = document.getElementById('analyze-button');
+        const backButton = document.getElementById('back-to-dashboard');
+
+        const usernameInput = document.getElementById('username');
+        const passwordInput = document.getElementById('password');
+        const loginError = document.getElementById('login-error');
+        const userIdDisplay = document.getElementById('user-id-display');
+
+        const uploadArea = document.getElementById('upload-area');
+        const loadingArea = document.getElementById('loading-area');
+        const fileUploadInput = document.getElementById('file-upload');
+        const fileNameDisplay = document.getElementById('file-name-display');
+
+        let uploadedFile = null;
+
+        // --- 페이지 전환 로직 ---
+        function showPage(pageId) {
+            loginPage.classList.add('hidden');
+            dashboardPage.classList.add('hidden');
+            resultsPage.classList.add('hidden');
+
+            document.getElementById(pageId).classList.remove('hidden');
+        }
+
+        // --- 로그인 및 로그아웃 ---
+        function handleLogin() {
+            const username = usernameInput.value;
+            const password = passwordInput.value;
+
+            // (프로토타입) 간단한 유효성 검사
+            if (!username || !password) {
+                loginError.classList.remove('hidden');
+                return;
+            }
+
+            // 실제 앱: 여기서 백엔드로 username, password를 보내 인증을 받아야 함
+            console.log('로그인 시도:', username);
+            loginError.classList.add('hidden');
+            userIdDisplay.textContent = username;
+            showPage('dashboard-page');
+        }
+
+        function handleLogout() {
+            console.log('로그아웃');
+            usernameInput.value = 'samjin_admin';
+            passwordInput.value = 'demo1234';
+            uploadedFile = null;
+            fileNameDisplay.classList.add('hidden');
+            fileNameDisplay.textContent = '';
+            showPage('login-page');
+        }
+
+        // --- 파일 업로드 및 분석 ---
+        fileUploadInput.addEventListener('change', (event) => {
+            const files = event.target.files;
+            if (files.length > 0) {
+                uploadedFile = files[0];
+                fileNameDisplay.textContent = `선택된 파일: ${uploadedFile.name}`;
+                fileNameDisplay.classList.remove('hidden');
+                analyzeButton.disabled = false;
+            }
+        });
+
+        // (드래그 앤 드롭 지원 - 간단한 시각적 피드백)
+        uploadArea.addEventListener('dragover', (event) => {
+            event.preventDefault();
+            uploadArea.firstElementChild.classList.add('border-blue-500', 'bg-gray-50');
+        });
+        uploadArea.addEventListener('dragleave', (event) => {
+            event.preventDefault();
+            uploadArea.firstElementChild.classList.remove('border-blue-500', 'bg-gray-50');
+        });
+        uploadArea.addEventListener('drop', (event) => {
+            event.preventDefault();
+            uploadArea.firstElementChild.classList.remove('border-blue-500', 'bg-gray-50');
+            const files = event.dataTransfer.files;
+            if (files.length > 0) {
+                uploadedFile = files[0];
+                fileNameDisplay.textContent = `선택된 파일: ${uploadedFile.name}`;
+                fileNameDisplay.classList.remove('hidden');
+                analyzeButton.disabled = false;
+                fileUploadInput.files = files; // input에도 파일 반영
+            }
+        });
+
+        async function handleAnalyze() {
+            if (!uploadedFile) {
+                // (alert 대신 콘솔 오류 사용)
+                console.error('분석할 파일을 먼저 선택해주세요.');
+                return;
+            }
+
+            console.log('분석 시작:', uploadedFile.name);
+
+            // UI 상태 변경: 로딩 시작
+            uploadArea.classList.add('hidden');
+            loadingArea.classList.remove('hidden');
+            analyzeButton.disabled = true;
+
+            // ======================================================
+            // !! 실제 백엔드 연동 !!
+            // ======================================================
+
+            const formData = new FormData();
+            formData.append('file', uploadedFile); // 'file'이라는 키로 파일 첨부
+
+            try {
+                // 백엔드 API 서버(server_v3.py)에 파일 전송
+                // ** [Ver 4.1] '127.0.0.1:8080' (waitress 기본)으로 연결합니다. **
+                const response = await fetch('http://127.0.0.1:8080/analyze', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error(`서버 오류: ${response.statusText}`);
+                }
+
+                // 서버로부터 실제 분석 결과를 JSON으로 받음
+                const realResult = await response.json();
+
+                // (임시) 이미지 URL 생성
+                realResult.imageUrl = URL.createObjectURL(uploadedFile);
+                realResult.fileName = uploadedFile.name;
+
+                // 실제 결과로 화면 표시
+                displayResults(realResult);
+
+            } catch (error) {
+                console.error('분석 중 오류 발생:', error);
+                console.error("Fetch 실패! 백엔드 서버(server_v3.py)가 켜져 있는지, '8080' 포트가 맞는지 확인하세요.");
+
+                // (시연용 임시 오류 처리: 서버 연결 실패 시에도 결과 페이지는 보여주되, 오류 상태 표시)
+                const errorResult = {
+                    fileName: uploadedFile.name,
+                    imageUrl: URL.createObjectURL(uploadedFile),
+                    status: '연결 실패',
+                    typos: 0,
+                    violations: 0,
+                    ocrText: "오류: 백엔드 서버(server_v3.py)에 연결할 수 없습니다. 터미널에서 \"'waitress' 엔진으로 '0.0.0.0:8080'에서...\" 메시지가 떠 있는지 확인해주세요.",
+                    analysis_list: [] // (Ver 5.0) analysis_list로 변경
+                };
+                displayResults(errorResult);
+
+            } finally {
+                // UI 상태 변경: 로딩 종료
+                uploadArea.classList.remove('hidden');
+                loadingArea.classList.add('hidden');
+                analyzeButton.disabled = false;
+                uploadedFile = null;
+                fileNameDisplay.classList.add('hidden');
+                fileNameDisplay.textContent = '';
+
+                // (성공 여부와 관계없이 결과 페이지로 이동)
+                showPage('results-page');
+            }
+        }
+
+        // --- (신규 Ver 5.0) 결과 표시 ('빨간펜' 기능 탑재) ---
+        function displayResults(result) {
+            document.getElementById('result-file-name').textContent = result.fileName;
+            document.getElementById('result-status').textContent = result.status;
+            document.getElementById('result-typos').textContent = `${result.typos} 건`;
+            document.getElementById('result-violations').textContent = `${result.violations} 건`;
+
+            // 이미지 타입이 아니면(예: PDF) 플레이스홀더 표시
+            if (result.imageUrl && uploadedFile && uploadedFile.type.startsWith('image/')) {
+                 document.getElementById('result-image').src = result.imageUrl;
+            } else if (uploadedFile) {
+                 document.getElementById('result-image').src = `https://placehold.co/600x400/eeeeee/cccccc?text=${uploadedFile.name}`;
+            } else {
+                 document.getElementById('result-image').src = `https://placehold.co/600x400/eeeeee/cccccc?text=Image`;
+            }
+
+            // --- (신규 Ver 5.0) '빨간펜' 그리기 ---
+            const ocrContainer = document.getElementById('result-ocr-text');
+            const analysisContainer = document.getElementById('result-ai-analysis');
+            analysisContainer.innerHTML = ''; // '오류 사유' 칸 초기화
+
+            let originalText = result.ocrText || ""; // '원본 OCR 텍스트'
+            let analysisList = result.analysis_list || []; // '오류 목록'
+
+            // (HTML 태그가 텍스트로 보이지 않도록 이스케이프 처리)
+            originalText = originalText.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+            // 1. '오류 목록'을 기반으로 '오류 사유' 칸을 먼저 채웁니다.
+            if (analysisList.length > 0) {
+                analysisList.forEach(item => {
+                    let colorClasses = '';
+                    let icon = '';
+                    let highlightClass = ''; // '빨간펜'에 쓸 CSS 클래스
+
+                    switch(item.type) {
+                        case 'violation':
+                            colorClasses = 'bg-red-50 border-red-200';
+                            icon = '❌';
+                            highlightClass = 'highlight-violation';
+                            break;
+                        case 'typo':
+                            colorClasses = 'bg-yellow-50 border-yellow-200';
+                            icon = '⚠️';
+                            highlightClass = 'highlight-typo';
+                            break;
+                        default:
+                            colorClasses = 'bg-blue-50 border-blue-200';
+                            icon = 'ℹ️';
+                            highlightClass = ''; // 정보는 하이라이트 안 함
+                            break;
+                    }
+
+                    // (신규 Ver 5.0) '오류 사유' 칸 (오른쪽) 채우기
+                    const itemHtml = `
+                        <div class="p-4 border ${colorClasses} rounded-lg">
+                            <h5 class="font-semibold text-gray-800">${icon} ${item.text_original}</h5>
+                            <p class="text-sm text-gray-600 mt-1">${item.description}</p>
+                            ${item.suggestion ? `<p class="text-sm text-green-700 mt-1"><b>수정 제안:</b> ${item.suggestion}</p>` : ''}
+                            ${item.reference ? `<p class="text-xs text-gray-500 mt-2"><b>관련 규정:</b> ${item.reference}</p>` : ''}
+                        </div>
+                    `;
+                    analysisContainer.innerHTML += itemHtml;
+
+                    // (신규 Ver 5.0) '빨간펜' 그릴 준비 (중요!)
+                    // AI가 알려준 '오류 원본 텍스트'를 '빨간펜' HTML 태그로 교체
+                    if (highlightClass && item.text_original) {
+                        // (HTML 이스케이프된 원본 텍스트에서 '빨간펜' 그리기)
+                        const escapedText = item.text_original.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                        const replacementHtml = `<span class="${highlightClass}">${escapedText}</span>`;
+
+                        // (정규식을 사용하여 텍스트가 여러 번 나와도 모두 '빨간펜'으로 칠함)
+                        originalText = originalText.replace(new RegExp(escapedText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), replacementHtml);
+                    }
+                });
+            } else if (analysisList.length === 0 && result.status !== '연결 실패') {
+                analysisContainer.innerHTML = '<p class="text-sm text-gray-500">감지된 특이사항이 없습니다.</p>';
+            }
+
+            // 2. '빨간펜'이 모두 그려진 '최종 텍스트'를 'OCR 추출 텍스트' 칸 (가운데)에 삽입
+            // (textContent 대신 innerHTML을 사용해서 '빨간펜'(span 태그)이 보이게 함)
+            ocrContainer.innerHTML = originalText;
+        }
+
+        // --- 이벤트 리스너 연결 ---
+        loginButton.addEventListener('click', handleLogin);
+        logoutButton.addEventListener('click', handleLogout);
+        logoutButton2.addEventListener('click', handleLogout);
+        analyzeButton.addEventListener('click', handleAnalyze);
+        backButton.addEventListener('click', () => {
+            // 대시보드로 돌아갈 때 업로드 영역 초기화
+            uploadArea.classList.remove('hidden');
+            loadingArea.classList.add('hidden');
+            analyzeButton.disabled = true;
+            uploadedFile = null;
+            fileNameDisplay.classList.add('hidden');
+            fileNameDisplay.textContent = '';
+            fileUploadInput.value = null; // 파일 선택 초기화
+            showPage('dashboard-page');
+        });
+
+        // --- 초기 상태 설정 ---
+        analyzeButton.disabled = true; // 파일이 선택될 때까지 비활성화
+        showPage('login-page'); // 첫 화면은 로그인 페이지로
+
+    </script>
+</body>
+</html>
