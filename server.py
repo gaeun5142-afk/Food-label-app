@@ -8,13 +8,14 @@ import base64
 from io import BytesIO
 
 from dotenv import load_dotenv
-from flask import Flask, request, jsonify, render_template, send_file
+from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 import pandas as pd
 import PIL.Image
 import re
 import html
-import difflib  # 🔹 OCR 의심 판별용
+import difflib  # OCR 의심 판별용
+import hashlib
 
 from openai import OpenAI
 
@@ -50,6 +51,9 @@ client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else OpenAI()
 TEXT_MODEL = os.getenv("OPENAI_TEXT_MODEL", "gpt-5.1-mini")
 VISION_MODEL = os.getenv("OPENAI_VISION_MODEL", "gpt-4.1-mini")
 
+# OCR 캐시 (같은 이미지 여러 번 올라와도 결과 재사용)
+OCR_CACHE: dict[str, str] = {}
+
 
 # =======================
 #  OpenAI 유틸 함수
@@ -58,6 +62,7 @@ VISION_MODEL = os.getenv("OPENAI_VISION_MODEL", "gpt-4.1-mini")
 def call_openai_response(model: str, input_data, *, response_format=None, max_retries: int = 3):
     """
     OpenAI Responses API 호출 + 간단 Retry
+    - temperature=0 으로 고정해서 결과를 최대한 deterministic 하게 유지
     """
     last_err = None
     for attempt in range(1, max_retries + 1):
@@ -65,6 +70,8 @@ def call_openai_response(model: str, input_data, *, response_format=None, max_re
             kwargs = {
                 "model": model,
                 "input": input_data,
+                "temperature": 0,
+                "top_p": 1,
             }
             if response_format:
                 kwargs["response_format"] = response_format
@@ -350,6 +357,15 @@ def ocr_image_bytes(image_bytes: bytes) -> str:
     1순위: OpenAI Vision
     2순위: pytesseract (설치되어 있는 경우)
     """
+    # 캐시 키 (리사이즈 전 원본 hash)
+    try:
+        h = hashlib.sha1(image_bytes).hexdigest()
+    except Exception:
+        h = None
+
+    if h and h in OCR_CACHE:
+        return OCR_CACHE[h]
+
     # 1) OpenAI Vision 기반 OCR
     try:
         resized_bytes, fmt = resize_image_bytes(image_bytes, max_size=1600)
@@ -385,12 +401,14 @@ def ocr_image_bytes(image_bytes: bytes) -> str:
             lines = text.split("\n")
             if lines and lines[0].startswith("```"):
                 lines = lines[1:]
-            if lines and lines[-1].strip().startswith("```"):
+            if lines and lines and lines[-1].strip().startswith("```"):
                 lines = lines[:-1]
             text = "\n".join(lines).strip()
 
         if text:
             print("✅ OpenAI Vision OCR 성공")
+            if h:
+                OCR_CACHE[h] = text
             return text
         else:
             print("⚠️ OpenAI Vision OCR 결과가 비어 있습니다.")
@@ -407,11 +425,15 @@ def ocr_image_bytes(image_bytes: bytes) -> str:
                 print("✅ pytesseract OCR 성공 (폴백)")
             else:
                 print("⚠️ pytesseract OCR 결과가 비어 있습니다.")
+            if h:
+                OCR_CACHE[h] = text
             return text
         except Exception as e:
             print("pytesseract OCR 실패:", e)
 
     print("⚠️ OCR 결과를 얻지 못했습니다.")
+    if h:
+        OCR_CACHE[h] = ""
     return ""
 
 
@@ -563,6 +585,10 @@ def extract_text_from_design_part(design_part):
     return ""
 
 
+# =======================
+#  hallucination / OCR 필터
+# =======================
+
 def filter_issues_by_text_evidence(result, standard_json: str, ocr_text: str):
     """
     LLM hallucination 방지 필터 (강화 버전):
@@ -599,18 +625,18 @@ def filter_issues_by_text_evidence(result, standard_json: str, ocr_text: str):
             continue
 
         expected = str(issue.get("expected", "") or "")
-        actual   = str(issue.get("actual", "") or "")
-        desc     = str(issue.get("issue", "") or "")
+        actual = str(issue.get("actual", "") or "")
+        desc = str(issue.get("issue", "") or "")
 
-        # 둘 다 비어 있으면 그냥 통과시켜도 크게 상관 없음
+        # 둘 다 비어 있으면 그냥 통과
         if not expected and not actual:
             filtered.append(issue)
             continue
 
         expected_in_std = bool(expected and expected in std_text)
         expected_in_ocr = bool(expected and expected in ocr_text)
-        actual_in_std   = bool(actual   and actual   in std_text)
-        actual_in_ocr   = bool(actual   and actual   in ocr_text)
+        actual_in_std = bool(actual and actual in std_text)
+        actual_in_ocr = bool(actual and actual in ocr_text)
 
         # 기본 요건: expected 는 Standard 안에, actual 은 OCR 안에 있어야 함
         if expected and not expected_in_std:
@@ -620,9 +646,9 @@ def filter_issues_by_text_evidence(result, standard_json: str, ocr_text: str):
             print("🚫 actual 이 OCR 텍스트 안에 없음 → 이슈 제거:", actual)
             continue
 
-        # 둘 다 Standard/OCR 양쪽에 다 있는 경우 → 모델이 위치를 임의로 짝지었을 가능성 ↑
+        # 둘 다 Standard/OCR 양쪽에 다 있는 경우 → 위치 짝이 애매하다고 보고 제거
         if (expected and expected_in_std and expected_in_ocr) and \
-           (actual   and actual_in_std   and actual_in_ocr):
+           (actual and actual_in_std and actual_in_ocr):
             print("🚫 expected/actual 이 Standard/OCR 양쪽에 모두 존재 → 애매, 이슈 제거:", {
                 "expected": expected,
                 "actual": actual
@@ -630,21 +656,31 @@ def filter_issues_by_text_evidence(result, standard_json: str, ocr_text: str):
             continue
 
         # 숫자/용량 관련 이슈인지 간단 판별
-        is_numeric_issue
+        is_numeric_issue = any(
+            key in desc for key in ["내용량", "총열량", "kcal", "Kcal", "중량", "용량"]
+        )
 
+        if is_numeric_issue and expected and actual:
+            # 진짜 'expected 는 Standard 전용, actual 은 OCR 전용' 인 경우만 유지
+            if not (expected_in_std and not expected_in_ocr and
+                    actual_in_ocr and not actual_in_std):
+                print("🚫 숫자/용량 이슈지만 분포가 애매 → 제거:", {
+                    "expected": expected,
+                    "actual": actual
+                })
+                continue
 
+        filtered.append(issue)
 
-import difflib  # 맨 위에 이미 있으면 중복 추가 안 해도 됨
+    result["issues"] = filtered
+    return result
+
 
 def mark_possible_ocr_error_issues(result, max_edit_distance: int = 2, drop_distance: int = 1):
     """
     expected / actual 간 문자 차이가 너무 작으면
-    1) 편집 거리 <= drop_distance 이면: 순수 OCR 노이즈로 보고 이슈를 아예 제거
+    1) 편집 거리 <= drop_distance 이면서 '원재료명 오탈자' 이슈 → 순수 OCR 노이즈로 보고 이슈를 아예 제거
     2) 그보다 크고 <= max_edit_distance 이면: 'OCR 오류 가능성' 플래그 + 심각도 낮춤
-
-    추가 규칙:
-    - issue 설명에 '원재료명 오탈자'가 포함되어 있으면, 더 보수적으로 OCR 노이즈로 본다.
-      (D-소비톨 vs D-솔비톨, 소브산칼륨 vs 소브산칼륨 같은 케이스 방지)
     """
 
     if not isinstance(result, dict):
@@ -659,7 +695,6 @@ def mark_possible_ocr_error_issues(result, max_edit_distance: int = 2, drop_dist
         if not a or not b:
             return 999
         s = difflib.SequenceMatcher(None, a, b)
-        # 거리 ≈ (1 - 유사도) * 최대 길이
         return int(round((1.0 - s.ratio()) * max(len(a), len(b))))
 
     new_issues = []
@@ -686,31 +721,22 @@ def mark_possible_ocr_error_issues(result, max_edit_distance: int = 2, drop_dist
 
         is_ingredient_typo = "원재료명 오탈자" in desc
 
-        # ===========================
-        # 1) 완전 OCR 노이즈로 보는 경우
-        # ===========================
-        # - 편집 거리 1 이하 이면서
-        #   * 또는 '원재료명 오탈자' 이슈인 경우
-        if dist <= drop_distance and is_ingredient_typo:
+        # 1) 원재료명 오탈자 + 편집거리 매우 작음 → OCR 노이즈로 보고 삭제
+        if is_ingredient_typo and dist <= drop_distance:
             print("🟢 원재료명 OCR 노이즈로 이슈 제거:", {
                 "expected": expected,
                 "actual": actual,
                 "distance": dist
             })
-            # append 안 해서 이슈 삭제
             continue
 
-        # ===========================
-        # 2) 비슷하지만 완전 같지는 않은 경우 → Minor + OCR 플래그
-        # ===========================
+        # 2) 그 외 비슷한 케이스 → Minor + OCR 플래그
         if dist <= max_edit_distance:
             flags = issue.setdefault("flags", [])
             if "possible_ocr_error" not in flags:
                 flags.append("possible_ocr_error")
 
-            # 심각도 조정: 어떤 타입이든 Minor 로 낮춤
             issue["type"] = "Minor"
-
             if "OCR 오류 가능성" not in desc:
                 issue["issue"] = (desc + " (OCR 오류 가능성 있음)").strip()
 
@@ -723,51 +749,6 @@ def mark_possible_ocr_error_issues(result, max_edit_distance: int = 2, drop_dist
         new_issues.append(issue)
 
     result["issues"] = new_issues
-    return result
-
-
-    def approx_distance(a: str, b: str) -> int:
-        """Levenshtein 대신 SequenceMatcher로 근사 거리 계산"""
-        if not a or not b:
-            return 999
-        s = difflib.SequenceMatcher(None, a, b)
-        return int(round((1.0 - s.ratio()) * max(len(a), len(b))))
-
-    for issue in issues:
-        if not isinstance(issue, dict):
-            continue
-        expected = str(issue.get("expected", "") or "").strip()
-        actual = str(issue.get("actual", "") or "").strip()
-
-        if not expected or not actual:
-            continue
-
-        dist = approx_distance(expected, actual)
-        min_len = min(len(expected), len(actual))
-
-        # 글자 길이가 너무 짧으면 노이즈라서 제외, 최소 3자 이상만 판단
-        if min_len >= 3 and dist <= max_edit_distance:
-            # OCR 오류 가능성 높음
-            flags = issue.setdefault("flags", [])
-            if "possible_ocr_error" not in flags:
-                flags.append("possible_ocr_error")
-
-            # 심각도 조정: Law_Violation → Minor
-            old_type = issue.get("type", "")
-            if old_type == "Law_Violation":
-                issue["type"] = "Minor"
-
-            # 설명에 한 줄 추가
-            desc = issue.get("issue", "")
-            if "OCR 오류 가능성" not in desc:
-                issue["issue"] = (desc + " (OCR 오류 가능성 있음)").strip()
-
-            print("🟡 OCR 의심 이슈:", {
-                "expected": expected,
-                "actual": actual,
-                "distance": dist
-            })
-
     return result
 
 
@@ -954,8 +935,8 @@ def verify_design():
     # 5) hallucination 필터 적용 (expected/actual이 실제 텍스트에 있는지 검증)
     result = filter_issues_by_text_evidence(result, standard_json or "", ocr_text or "")
 
-    # 6) OCR 의심 이슈 표시 (expected/actual 차이가 매우 작은 경우)
-    result = mark_possible_ocr_error_issues(result, max_edit_distance=2)
+    # 6) OCR 의심 이슈 처리 (expected/actual 차이가 매우 작은 경우)
+    result = mark_possible_ocr_error_issues(result, max_edit_distance=2, drop_distance=1)
 
     # 7) HTML 태그 정리
     result = clean_ai_response(result)
