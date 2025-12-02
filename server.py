@@ -87,12 +87,27 @@ def ocr_bytes_to_text(image_bytes):
     if not TESSERACT_AVAILABLE:
         return ""
     try:
-        img = PIL.Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        text = pytesseract.image_to_string(img, lang='kor+eng')
+        img = PIL.Image.open(io.BytesIO(image_bytes)).convert("L")  # 그레이스케일
+
+        # 🔧 라벨 OCR에 유리하도록 살짝 선명하게 / 이진화
+        # (패키지에 따라 이 부분은 조절 가능)
+        img = img.point(lambda x: 0 if x < 160 else 255, '1')  # 단순 임계값
+
+        # 🔧 Tesseract 설정
+        # --psm 6 : 한 블록 안에 여러 줄 텍스트
+        # --oem 3 : LSTM 엔진
+        config = '--psm 6 --oem 3'
+
+        text = pytesseract.image_to_string(
+            img,
+            lang='kor+eng',
+            config=config
+        )
         return text
     except Exception as e:
         print("OCR 폴백 실패:", e)
         return ""
+
 
 # 파일을 모델 파트로 변환
 def process_file_to_part(file_storage):
@@ -148,7 +163,7 @@ def extract_ingredient_info_from_image(image_file):
         if not TESSERACT_AVAILABLE:
             return {"error": "Tesseract 미설치됨"}
 
-        ocr_text = pytesseract.image_to_string(img_pil, lang='kor+eng')
+        ocr_text = ocr_text = ocr_bytes_to_text(image_data)
 
         messages = [
             {"role": "system", "content": "당신은 식품 표시사항 전문가입니다."},
