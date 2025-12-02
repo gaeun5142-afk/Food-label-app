@@ -550,22 +550,37 @@ def simple_generate_highlight_html(ocr_text: str, standard_ingredients: list[str
                 matched = True
                 line_html = line_html.replace(
                     html.escape(standard_ingredients[idx]),
-                    f"<span style='background:#e6f4ea;padding:2px 4px;border-radius:4px;'>{html.escape(standard_ingredients[idx])}</span>",
+                    (
+                        "<span style="
+                        "'background:#e6f4ea;padding:2px 4px;border-radius:4px;"
+                        "text-decoration:none;'>"
+                        f"{html.escape(standard_ingredients[idx])}"
+                        "</span>"
+                    ),
                 )
         if not matched:
             line_html = (
-                f"<span style='color:#ad2e2e; font-weight:600;'>{line_html}</span>"
+                "<span style="
+                "'color:#ad2e2e; font-weight:600; text-decoration:none;'>"
+                f"{line_html}"
+                "</span>"
             )
+
+        # 🔹 여기서도 text-decoration:none 강제
         html_lines.append(
-            f"<div style='margin-bottom:6px; font-family:monospace; white-space:pre-wrap;'>{line_html}</div>"
+            "<div style="
+            "'margin-bottom:6px; font-family:monospace; "
+            "white-space:pre-wrap; text-decoration:none;'>"
+            f"{line_html}</div>"
         )
+
     result_html = (
-        "<div style='padding:10px; background:#fff; border-radius:8px;'>"
+        "<div style='padding:10px; background:#fff; border-radius:8px; "
+        "text-decoration:none;'>"
         + "".join(html_lines)
         + "</div>"
     )
     return result_html
-
 
 def extract_text_from_design_part(design_part):
     try:
