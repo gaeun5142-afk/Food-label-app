@@ -603,7 +603,7 @@ def filter_issues_by_text_evidence(result, standard_json: str, ocr_text: str):
     return result
 
 
-import difflib  # 맨 위에 이미 있다면 중복 추가 안 해도 됨
+import difflib  # 맨 위에 이미 있으면 중복 추가 안 해도 됨
 
 def mark_possible_ocr_error_issues(result, max_edit_distance: int = 2, drop_distance: int = 1):
     """
@@ -611,9 +611,11 @@ def mark_possible_ocr_error_issues(result, max_edit_distance: int = 2, drop_dist
     1) 편집 거리 <= drop_distance 이면: 순수 OCR 노이즈로 보고 이슈를 아예 제거
     2) 그보다 크고 <= max_edit_distance 이면: 'OCR 오류 가능성' 플래그 + 심각도 낮춤
 
-    - drop_distance: 완전히 숨기는 기준 (보통 1)
-    - max_edit_distance: 이 값까지는 Minor + OCR 플래그
+    추가 규칙:
+    - issue 설명에 '원재료명 오탈자'가 포함되어 있으면, 더 보수적으로 OCR 노이즈로 본다.
+      (D-소비톨 vs D-솔비톨, 소브산칼륨 vs 소브산칼륨 같은 케이스 방지)
     """
+
     if not isinstance(result, dict):
         return result
 
@@ -637,8 +639,8 @@ def mark_possible_ocr_error_issues(result, max_edit_distance: int = 2, drop_dist
 
         expected = str(issue.get("expected", "") or "").strip()
         actual = str(issue.get("actual", "") or "").strip()
+        desc = str(issue.get("issue", "") or "").strip()
 
-        # expected/actual 중 하나라도 없으면 편집거리 계산 X
         if not expected or not actual:
             new_issues.append(issue)
             continue
@@ -646,34 +648,38 @@ def mark_possible_ocr_error_issues(result, max_edit_distance: int = 2, drop_dist
         dist = approx_distance(expected, actual)
         min_len = min(len(expected), len(actual))
 
-        # 너무 짧은 단어(2자 이하)는 노이즈 많으니 그냥 통과
+        # 너무 짧은 단어(2자 이하)는 노이즈 많으니 그대로 둔다.
         if min_len < 3:
             new_issues.append(issue)
             continue
 
-        # 1) 편집 거리 매우 작으면 -> 순수 OCR 오차라고 보고 이슈 제거
-        if dist <= drop_distance:
-            print("🟢 OCR-only 노이즈로 이슈 제거:", {
+        is_ingredient_typo = "원재료명 오탈자" in desc
+
+        # ===========================
+        # 1) 완전 OCR 노이즈로 보는 경우
+        # ===========================
+        # - 편집 거리 1 이하 이면서
+        #   * 또는 '원재료명 오탈자' 이슈인 경우
+        if dist <= drop_distance and is_ingredient_typo:
+            print("🟢 원재료명 OCR 노이즈로 이슈 제거:", {
                 "expected": expected,
                 "actual": actual,
                 "distance": dist
             })
-            # append 안 함 → 화면에 안 나옴
+            # append 안 해서 이슈 삭제
             continue
 
-        # 2) 그 외에 어느 정도 비슷한 경우 -> OCR 의심 이슈로 다운그레이드
+        # ===========================
+        # 2) 비슷하지만 완전 같지는 않은 경우 → Minor + OCR 플래그
+        # ===========================
         if dist <= max_edit_distance:
             flags = issue.setdefault("flags", [])
             if "possible_ocr_error" not in flags:
                 flags.append("possible_ocr_error")
 
             # 심각도 조정: 어떤 타입이든 Minor 로 낮춤
-            old_type = issue.get("type", "")
-            if old_type != "Minor":
-                issue["type"] = "Minor"
+            issue["type"] = "Minor"
 
-            # 설명에 한 줄 추가
-            desc = issue.get("issue", "")
             if "OCR 오류 가능성" not in desc:
                 issue["issue"] = (desc + " (OCR 오류 가능성 있음)").strip()
 
@@ -687,6 +693,7 @@ def mark_possible_ocr_error_issues(result, max_edit_distance: int = 2, drop_dist
 
     result["issues"] = new_issues
     return result
+
 
     def approx_distance(a: str, b: str) -> int:
         """Levenshtein 대신 SequenceMatcher로 근사 거리 계산"""
