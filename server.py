@@ -565,20 +565,29 @@ def extract_text_from_design_part(design_part):
 
 def filter_issues_by_text_evidence(result, standard_json: str, ocr_text: str):
     """
-    LLM hallucination 방지 필터:
-    - expected가 Standard에 실제 존재하는지
-    - actual이 OCR 텍스트에 실제 존재하는지
-    확인 후, 둘 중 하나라도 없으면 이슈에서 제거
+    LLM hallucination 방지 필터 (강화 버전):
+
+    1) expected 가 기준(Standard) 텍스트에 실제 존재하는지
+    2) actual 이 OCR 텍스트에 실제 존재하는지
+
+    + 추가 규칙:
+      - expected/actual 이 둘 다 Standard/OCR 양쪽에 다 있는 경우 → 애매하므로 이슈 제거
+      - '내용량/총열량/kcal/중량' 같은 숫자 이슈는
+        * expected 는 Standard 에만 있고 OCR 에는 없어야 하고
+        * actual 은 OCR 에만 있고 Standard 에는 없어야 유지
+        그 외는 전부 제거 (모델이 숫자 짝을 임의로 맞춘 것으로 판단)
     """
     if not isinstance(result, dict):
         return result
 
-    # Standard 텍스트 펼치기
+    # Standard 전체 텍스트 풀어서 한 덩어리로
     try:
         std_obj = json.loads(standard_json) if standard_json else {}
         std_text = json.dumps(std_obj, ensure_ascii=False)
     except Exception:
         std_text = standard_json or ""
+
+    ocr_text = ocr_text or ""
 
     issues = result.get("issues", [])
     if not isinstance(issues, list):
@@ -588,19 +597,41 @@ def filter_issues_by_text_evidence(result, standard_json: str, ocr_text: str):
     for issue in issues:
         if not isinstance(issue, dict):
             continue
+
         expected = str(issue.get("expected", "") or "")
-        actual = str(issue.get("actual", "") or "")
+        actual   = str(issue.get("actual", "") or "")
+        desc     = str(issue.get("issue", "") or "")
 
-        ok_expected = (expected == "") or (expected in std_text)
-        ok_actual = (actual == "") or (actual in ocr_text)
-
-        if ok_expected and ok_actual:
+        # 둘 다 비어 있으면 그냥 통과시켜도 크게 상관 없음
+        if not expected and not actual:
             filtered.append(issue)
-        else:
-            print("🚫 hallucination 의심 이슈 제거:", {"expected": expected, "actual": actual})
+            continue
 
-    result["issues"] = filtered
-    return result
+        expected_in_std = bool(expected and expected in std_text)
+        expected_in_ocr = bool(expected and expected in ocr_text)
+        actual_in_std   = bool(actual   and actual   in std_text)
+        actual_in_ocr   = bool(actual   and actual   in ocr_text)
+
+        # 기본 요건: expected 는 Standard 안에, actual 은 OCR 안에 있어야 함
+        if expected and not expected_in_std:
+            print("🚫 expected 가 Standard 안에 없음 → 이슈 제거:", expected)
+            continue
+        if actual and not actual_in_ocr:
+            print("🚫 actual 이 OCR 텍스트 안에 없음 → 이슈 제거:", actual)
+            continue
+
+        # 둘 다 Standard/OCR 양쪽에 다 있는 경우 → 모델이 위치를 임의로 짝지었을 가능성 ↑
+        if (expected and expected_in_std and expected_in_ocr) and \
+           (actual   and actual_in_std   and actual_in_ocr):
+            print("🚫 expected/actual 이 Standard/OCR 양쪽에 모두 존재 → 애매, 이슈 제거:", {
+                "expected": expected,
+                "actual": actual
+            })
+            continue
+
+        # 숫자/용량 관련 이슈인지 간단 판별
+        is_numeric_issue
+
 
 
 import difflib  # 맨 위에 이미 있으면 중복 추가 안 해도 됨
