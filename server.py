@@ -101,7 +101,7 @@ ALL_LAW_TEXT = load_law_texts()
 
 # --- PROMPTS: (원본 길이 그대로 유지) ---
 PROMPT_EXTRACT_INGREDIENT_INFO = """
-이 이미지는 원부재료 표시사항 사진입니다. 
+이 이미지는 원부재료 표시사항 사진입니다.   
 **필수적으로 추출해야 할 정보만** 추출하세요.
 
 [추출해야 할 정보]
@@ -334,17 +334,77 @@ def clean_ai_response(data):
     else:
         return data
 
-# --- OCR 폴백 ---
+# --- OCR 함수 (수정된 부분) ---
 def ocr_image_bytes(image_bytes: bytes) -> str:
-    if not TESSERACT_AVAILABLE:
-        return ""
+    """
+    이미지에서 텍스트를 추출하는 OCR 함수
+    1순위: Gemini 비전 OCR (한글 위주로 전체 텍스트 그대로 인식)
+    2순위(폴백): pytesseract (설치/환경이 되어 있는 경우)
+    """
+    # 1) 우선 Gemini 비전으로 OCR 시도
     try:
         img = PIL.Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        text = pytesseract.image_to_string(img, lang='kor+eng')
-        return text
+
+        # 너무 큰 이미지는 적당히 리사이즈 (모델 안정성 위해)
+        max_size = 1600
+        if max(img.size) > max_size:
+            ratio = max_size / max(img.size)
+            new_size = (int(img.width * ratio), int(img.height * ratio))
+            img = img.resize(new_size, PIL.Image.Resampling.LANCZOS)
+            print(f"📉 OCR용 이미지 리사이징: {new_size}")
+
+        ocr_prompt = """
+이 이미지는 식품 포장지/라벨 등의 사진입니다.
+이미지 안에 보이는 모든 글자를 **그대로** 한글로 인식해서 적어 주세요.
+
+[중요]
+- 줄바꿈, 공백, 숫자, 기호를 최대한 원문 그대로 유지하세요.
+- 의미를 요약하거나 설명하지 말고, **순수 텍스트만** 출력하세요.
+- 한국어는 한국어로, 영어/숫자는 있는 그대로 적어 주세요.
+"""
+
+        model = genai.GenerativeModel(MODEL_NAME)
+        response = model.generate_content([ocr_prompt, img])
+
+        text = getattr(response, "text", "") or ""
+        text = text.strip()
+
+        # 혹시 코드블럭 형태로 올 때 처리 (``` 또는 ```text 감싸기 제거)
+        if text.startswith("```"):
+            lines = text.split("\n")
+            # 첫 줄 제거
+            if lines and lines[0].startswith("```"):
+                lines = lines[1:]
+            # 마지막 줄에 ``` 있으면 제거
+            if lines and lines[-1].strip().startswith("```"):
+                lines = lines[:-1]
+            text = "\n".join(lines).strip()
+
+        if text:
+            print("✅ Gemini OCR 성공")
+            return text
+        else:
+            print("⚠️ Gemini OCR 결과가 비어 있습니다.")
     except Exception as e:
-        print("pytesseract OCR 실패:", e)
-        return ""
+        print("❌ Gemini OCR 실패:", e)
+
+    # 2) 폴백: pytesseract 사용 (가능한 경우)
+    if TESSERACT_AVAILABLE:
+        try:
+            img = PIL.Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            text = pytesseract.image_to_string(img, lang='kor+eng')
+            text = text.strip()
+            if text:
+                print("✅ pytesseract OCR 성공 (폴백)")
+            else:
+                print("⚠️ pytesseract OCR 결과가 비어 있습니다. (폴백)")
+            return text
+        except Exception as e:
+            print("pytesseract OCR 실패:", e)
+
+    # 3) 최종 실패
+    print("⚠️ OCR 결과를 얻지 못했습니다.")
+    return ""
 
 # --- 파일 처리 (수정됨: 이미지 -> PIL.Image 반환) ---
 def process_file_to_part(file_storage):
@@ -390,7 +450,7 @@ def process_file_to_part(file_storage):
 
     return {"mime_type": mime_type, "data": file_data}
 
-# --- 이미지 원재료 정보 추출 (기존 방식 유지) ---
+# --- 이미지 원재료 정보 추출 (기존 방식 + OCR 폴백 조건만 수정) ---
 def extract_ingredient_info_from_image(image_file):
     try:
         image_data = image_file.read()
@@ -408,10 +468,13 @@ def extract_ingredient_info_from_image(image_file):
         print("---- extract_ingredient_info_from_image 모델 응답 끝 ----")
 
         result_text = getattr(response, "text", "").strip()
-        if not result_text and TESSERACT_AVAILABLE:
+
+        # 결과가 비어 있으면, 환경과 상관없이 OCR 폴백 실행
+        if not result_text:
             ocr_text = ocr_image_bytes(image_data)
             if ocr_text:
                 return {"ocr_fallback_text": ocr_text}
+
         if result_text.startswith("```json"):
             result_text = result_text[7:-3] if result_text.endswith("```") else result_text[7:]
         elif result_text.startswith("```"):
@@ -659,7 +722,10 @@ def simple_generate_highlight_html(ocr_text: str, standard_ingredients: list):
         for idx, std in enumerate(std_lower):
             if std in lowered:
                 matched = True
-                line_html = line_html.replace(html.escape(standard_ingredients[idx]), f"<span style='background:#e6f4ea;padding:2px 4px;border-radius:4px;'>{html.escape(standard_ingredients[idx])}</span>")
+                line_html = line_html.replace(
+                    html.escape(standard_ingredients[idx]),
+                    f"<span style='background:#e6f4ea;padding:2px 4px;border-radius:4px;'>{html.escape(standard_ingredients[idx])}</span>"
+                )
         if not matched:
             line_html = f"<span style='color:#ad2e2e; font-weight:600;'>{line_html}</span>"
         html_lines.append(f"<div style='margin-bottom:6px; font-family:monospace; white-space:pre-wrap;'>{line_html}</div>")
