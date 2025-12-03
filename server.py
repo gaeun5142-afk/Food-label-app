@@ -90,7 +90,7 @@ def call_openai_from_parts(parts, json_mode: bool = True) -> str:
                 "type": "input_image",
                 "image_url": {"url": data_url},
             })
-        else:
+else:
             # dict 등 기타 타입은 필요시 확장
             pass
 
@@ -164,43 +164,43 @@ PROMPT_CREATE_STANDARD = """
 
 [출력 양식 - JSON만 출력]
 {
-  "product_info": {
-    "product_name": "제품명",
+    "product_info": {
+        "product_name": "제품명",
     "food_type": "식품의 유형",
     "net_weight": "내용량",
     "expiration_date": "소비기한",
     "storage_method": "보관방법",
     "packaging_material": "포장재질",
-    "item_report_number": "품목보고번호",
+        "item_report_number": "품목보고번호",
     "front_calories": "전면부 총열량/문구"
-  },
-  "ingredients": {
+    },
+    "ingredients": {
     "structured_list": ["..."],
     "continuous_text": "원재료명, 원재료명2, ..."
-  },
-  "allergens": {
-    "contains": ["대두", "게"],
+    },
+    "allergens": {
+        "contains": ["대두", "게"],
     "manufacturing_facility": "제조시설 안내 문구"
-  },
-  "nutrition_info": {
-    "total_content": "1000 g",
-    "per_100g": {
+    },
+    "nutrition_info": {
+        "total_content": "1000 g",
+        "per_100g": {
       "calories": "130 Kcal"
     },
     "disclaimer": "영양정보 주의 문구 등"
-  },
-  "manufacturer": {
+    },
+    "manufacturer": {
     "name": "제조업체명",
     "address": "주소"
   },
   "precautions": ["주의사항1", "주의사항2"],
-  "law_compliance": {
-    "status": "compliant" | "needs_review",
-    "issues": ["법률 위반 사항 목록 (있는 경우)"]
-  },
-  "details": [
-    {"name": "원재료명", "ratio": "배합비율", "origin": "원산지", "sub_ingredients": "하위원료"}
-  ]
+    "law_compliance": {
+        "status": "compliant" | "needs_review",
+        "issues": ["법률 위반 사항 목록 (있는 경우)"]
+    },
+    "details": [
+        {"name": "원재료명", "ratio": "배합비율", "origin": "원산지", "sub_ingredients": "하위원료"}
+    ]
 }
 """
 
@@ -229,20 +229,20 @@ PROMPT_VERIFY_DESIGN = """
 {
   "design_ocr_text": "디자인 전체 텍스트(raw_text 또는 OCR 결과) 그대로",
   "score": 100,
-  "law_compliance": {
-    "status": "compliant" | "violation",
+    "law_compliance": {
+        "status": "compliant" | "violation",
     "violations": ["식품등의 표시기준 제X조 위반..."]
-  },
-  "issues": [
-    {
+    },
+    "issues": [
+        {
       "type": "Critical" | "Minor" | "Law_Violation",
       "location": "항목명 (예: 영양정보)",
       "issue": "오류 상세 설명",
       "expected": "기준서 데이터에서 실제 발췌한 텍스트",
       "actual": "디자인 OCR에서 실제 발췌한 틀린 텍스트",
       "suggestion": "수정 제안"
-    }
-  ]
+        }
+    ]
 }
 """
 
@@ -343,7 +343,7 @@ def ocr_image_bytes_with_chatgpt(image_bytes: bytes) -> str:
         else:
             print("⚠️ ChatGPT OCR 결과가 비어 있음")
             return ""
-    except Exception as e:
+        except Exception as e:
         print("❌ ChatGPT OCR 실패:", e)
         return ""
 
@@ -371,7 +371,7 @@ def ocr_bytes_to_text(image_bytes: bytes) -> str:
         else:
             print("⚠️ pytesseract OCR 결과가 비어 있음")
         return text
-    except Exception as e:
+        except Exception as e:
         print("OCR 폴백 실패:", e)
         return ""
 
@@ -443,16 +443,18 @@ def find_common_errors(ocr_results: list, standard_json: str) -> dict:
     if not ocr_results:
         return {"ocr_text": "", "issues": [], "design_ocr_text": ""}
     
-    # 각 OCR 결과에 대해 검증 수행
+    # 각 OCR 결과에 대해 독립적으로 검증 수행
     all_verification_results = []
     for i, ocr_text in enumerate(ocr_results):
         if not ocr_text:
             continue
-        print(f"🔍 OCR 결과 {i+1} 검증 중...")
+        print(f"🔍 OCR 결과 {i+1}/{len(ocr_results)} 검증 중...")
         result = verify_with_ocr(ocr_text, standard_json)
+        issues = result.get("issues", [])
+        print(f"   → {len(issues)}개 오류 발견")
         all_verification_results.append({
             "ocr_text": ocr_text,
-            "issues": result.get("issues", []),
+            "issues": issues,
             "design_ocr_text": result.get("design_ocr_text", ocr_text)
         })
     
@@ -460,29 +462,134 @@ def find_common_errors(ocr_results: list, standard_json: str) -> dict:
         return {"ocr_text": ocr_results[0] if ocr_results else "", "issues": [], "design_ocr_text": ocr_results[0] if ocr_results else ""}
     
     # 2번 이상 일치하는 오류 찾기
-    # 각 issue를 키로 사용하여 카운트
-    issue_counts = {}
+    # 유연한 비교를 위해 location + expected + issue 설명을 키로 사용
+    def normalize_text(text):
+        """텍스트 정규화 (공백 제거, 소문자 변환 등)"""
+        if not text:
+            return ""
+        # 공백 정리
+        text = re.sub(r'\s+', ' ', str(text)).strip()
+        return text
+    
+    def issue_similarity(issue1, issue2):
+        """두 issue가 같은 오류인지 판단 (유사도 기반)"""
+        loc1 = normalize_text(issue1.get("location", ""))
+        loc2 = normalize_text(issue2.get("location", ""))
+        exp1 = normalize_text(issue1.get("expected", ""))
+        exp2 = normalize_text(issue2.get("expected", ""))
+        desc1 = normalize_text(issue1.get("issue", ""))
+        desc2 = normalize_text(issue2.get("issue", ""))
+        
+        # 1. location이 같거나 포함 관계여야 함 (가장 중요)
+        if loc1 and loc2:
+            if loc1 != loc2:
+                # location이 완전히 다르면 다른 오류
+                if loc1 not in loc2 and loc2 not in loc1:
+                    # 하지만 "원재료명" 같은 공통 키워드가 있으면 같은 카테고리로 봄
+                    common_words = set(loc1.split()) & set(loc2.split())
+                    if not common_words:
+                        return False
+        
+        # 2. expected가 같거나 비슷해야 함 (핵심 비교 기준)
+        if exp1 and exp2:
+            if exp1 == exp2:
+                return True  # expected가 완전히 같으면 같은 오류
+            # expected가 다르지만 유사한 경우
+            # "없음" 같은 특수 케이스 처리
+            if "없음" in exp1 and "없음" in exp2:
+                return True
+            # expected의 핵심 부분이 같으면 같은 오류
+            # 예: "야채찌이 어묵" vs "야채찌이 어묵" (공백 차이)
+            exp1_clean = re.sub(r'\s+', '', exp1)
+            exp2_clean = re.sub(r'\s+', '', exp2)
+            if exp1_clean == exp2_clean:
+                return True
+            # expected의 일부가 포함되어 있으면 같은 오류로 봄
+            if len(exp1) > 5 and len(exp2) > 5:
+                if exp1[:10] == exp2[:10] or exp1[-10:] == exp2[-10:]:
+                    return True
+        
+        # 3. issue 설명의 핵심 키워드가 비슷해야 함
+        if desc1 and desc2:
+            # 핵심 키워드 추출
+            important_keywords = ["누락", "오기", "추가", "변경", "위반", "불일치", "공백", "없음"]
+            keywords1 = [kw for kw in important_keywords if kw in desc1]
+            keywords2 = [kw for kw in important_keywords if kw in desc2]
+            if keywords1 and keywords2:
+                if set(keywords1) & set(keywords2):  # 공통 키워드가 있으면
+                    # location과 expected가 비슷하면 같은 오류
+                    if loc1 and loc2 and (loc1 in loc2 or loc2 in loc1):
+                        if exp1 and exp2:
+                            return True
+        
+        # 4. location과 expected가 모두 비슷하면 같은 오류
+        if loc1 and loc2 and (loc1 in loc2 or loc2 in loc1):
+            if exp1 and exp2:
+                # expected의 핵심 단어가 겹치면 같은 오류
+                exp1_words = set(re.findall(r'\w+', exp1))
+                exp2_words = set(re.findall(r'\w+', exp2))
+                if exp1_words & exp2_words:  # 공통 단어가 있으면
+                    return True
+        
+        return False
+    
+    # 모든 issue를 수집하고 그룹화
+    all_issues = []
     for verification in all_verification_results:
         for issue in verification.get("issues", []):
-            # issue를 식별할 수 있는 키 생성 (location + expected + actual)
-            issue_key = (
-                str(issue.get("location", "")),
-                str(issue.get("expected", "")),
-                str(issue.get("actual", ""))
-            )
-            if issue_key not in issue_counts:
-                issue_counts[issue_key] = {
-                    "count": 0,
-                    "issue": issue
-                }
-            issue_counts[issue_key]["count"] += 1
+            all_issues.append(issue)
+    
+    # 유사한 issue들을 그룹화
+    # 먼저 location + expected를 키로 사용하여 그룹화 (더 정확)
+    issue_groups_by_key = {}
+    for issue in all_issues:
+        loc = normalize_text(issue.get("location", ""))
+        exp = normalize_text(issue.get("expected", ""))
+        
+        # "없음"이 포함된 경우 location만 키로 사용
+        if "없음" in exp or not exp:
+            key = (loc, None)  # location만 키로 사용
+        else:
+            key = (loc, exp)  # location과 expected를 키로 사용
+        
+        if key not in issue_groups_by_key:
+            issue_groups_by_key[key] = []
+        issue_groups_by_key[key].append(issue)
+    
+    # 키가 없는 경우 (location이나 expected가 없는 경우) 유사도 기반으로 그룹화
+    issue_groups = []
+    for key, group in issue_groups_by_key.items():
+        if key[0]:  # location이 있으면
+            issue_groups.append(group)
+        else:
+            # location이 없는 경우 기존 그룹과 비교
+            found_group = False
+            for existing_group in issue_groups:
+                if issue_similarity(existing_group[0], group[0]):
+                    existing_group.extend(group)
+                    found_group = True
+                    break
+            if not found_group:
+                issue_groups.append(group)
     
     # 2번 이상 일치하는 오류만 필터링
     common_issues = []
-    for key, data in issue_counts.items():
-        if data["count"] >= 2:
-            common_issues.append(data["issue"])
-            print(f"✅ 공통 오류 발견 ({data['count']}/3): {data['issue'].get('location', '')} - {data['issue'].get('issue', '')}")
+    for group in issue_groups:
+        if len(group) >= 2:
+            # 가장 자세한 issue를 대표로 선택 (가장 긴 issue 설명)
+            representative = max(group, key=lambda x: len(str(x.get("issue", ""))))
+            common_issues.append(representative)
+            location = representative.get('location', '')
+            issue_desc = representative.get('issue', '')[:50]
+            expected = representative.get('expected', '')[:30]
+            print(f"✅ 공통 오류 발견 ({len(group)}/{len(ocr_results)}): [{location}] {issue_desc}... (expected: {expected}...)")
+        else:
+            # 1번만 발견된 오류는 제외
+            location = group[0].get('location', '')
+            issue_desc = group[0].get('issue', '')[:50]
+            print(f"❌ 단일 발견 오류 제외 (1/{len(ocr_results)}): [{location}] {issue_desc}...")
+    
+    print(f"📊 총 {len(all_issues)}개 오류 중 {len(common_issues)}개가 2번 이상 일치하여 최종 선택됨")
     
     # 첫 번째 OCR 결과를 메인으로 사용
     main_ocr = all_verification_results[0]["ocr_text"]
@@ -605,7 +712,7 @@ def extract_ingredient_info_from_image(image_file):
             if result_text.startswith("json"):
                 result_text = result_text[4:].strip()
         result_text = result_text.strip()
-
+        
         # JSON 파싱 시도
         try:
             return json.loads(result_text)
@@ -730,14 +837,14 @@ def verify_design():
     - OCR 텍스트에 오류 하이라이트 적용
     """
     print("🕵️‍♂️ 디자인 검증 시작...")
-    
+
     # 1. 디자인 파일 (PDF or 이미지)
     design_file = request.files.get('design_file')
     
     # 2. 기준 데이터 (엑셀 파일 또는 JSON 문자열)
     standard_excel = request.files.get('standard_excel')
     standard_json = request.form.get('standard_data')
-    
+
     if not design_file:
         return jsonify({"error": "디자인 파일이 필요합니다."}), 400
     
@@ -785,7 +892,7 @@ def verify_design():
             print(f"❌ 엑셀 파일 읽기 오류: {e}")
             traceback.print_exc()
             return jsonify({"error": f"엑셀 파일 읽기 실패: {str(e)}"}), 400
-    
+
     # 디자인 파일을 이미지로 변환
     try:
         design_data = design_file.read()
@@ -835,7 +942,7 @@ def verify_design():
             "design_ocr_text": common_result.get("design_ocr_text", common_result.get("ocr_text", "")),
             "design_ocr_highlighted_html": highlighted_html,
             "score": 100 - (len(common_result.get("issues", [])) * 5),  # 간단한 점수 계산
-            "law_compliance": {
+    "law_compliance": {
                 "status": "compliant" if len(common_result.get("issues", [])) == 0 else "violation",
                 "violations": []
             },
