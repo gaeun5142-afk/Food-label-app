@@ -513,23 +513,37 @@ def find_common_errors(ocr_results: list, standard_json: str) -> dict:
 
 def filter_issues_by_text_evidence(result, standard_json: str, ocr_text: str):
     """
-    LLM 헛소리 방지 필터:
-
-    1) expected(정답)는 반드시 Standard JSON 텍스트 안에 실제 존재해야 함
-    2) actual(실제)는 반드시 OCR 텍스트 안에 실제 존재해야 함
-
-    둘 중 하나라도 없으면 그 issue 는 제거.
+    LLM 헛소리 및 OCR 불일치 필터링 + 특정 명칭 예외 허용(정답 처리)
     """
+
+    # --- 예외 허용 (정답으로 인정하는 명칭 쌍) ---
+    EXCEPTION_EQUIVALENT_PAIRS = [
+        ("D-소비톨", "D-솔비톨"),
+        ("소브산칼륨", "소르빈산칼륨"),
+        ("소브산칼륨(보존료)", "소르빈산칼륨(보존료)"),
+    ]
+
+    def is_equivalent(a, b):
+        if not a or not b:
+            return False
+        a_clean = a.replace(" ", "").replace("-", "")
+        b_clean = b.replace(" ", "").replace("-", "")
+        # 동일하거나 예외쌍이면 동일한 것으로 인정
+        return (
+            a_clean == b_clean or 
+            (a, b) in EXCEPTION_EQUIVALENT_PAIRS or
+            (b, a) in EXCEPTION_EQUIVALENT_PAIRS
+        )
+
     if not isinstance(result, dict):
         return result
 
+    # Standard JSON을 문자열로 읽기
     try:
         std_obj = json.loads(standard_json) if standard_json else {}
         std_text = json.dumps(std_obj, ensure_ascii=False)
     except Exception:
         std_text = standard_json or ""
-
-    ocr_text = ocr_text or ""
 
     issues = result.get("issues", [])
     if not isinstance(issues, list):
@@ -541,19 +555,28 @@ def filter_issues_by_text_evidence(result, standard_json: str, ocr_text: str):
             continue
 
         expected = str(issue.get("expected", "") or "")
-        actual = str(issue.get("actual", "") or "")
+        actual   = str(issue.get("actual", "") or "")
 
-        if expected and expected not in std_text:
-            print("🚫 expected 가 Standard 안에 없음 → 이슈 제거:", expected)
+        # --- (0) 예외 허용: 동일하다고 간주하고 skip ---
+        if is_equivalent(expected, actual):
+            print("⚠️ 예외 허용: 동일 처리 → 오류 제거:", expected, actual)
             continue
+
+        # --- (1) expected는 Standard 내 존재해야 함 ---
+        if expected and expected not in std_text:
+            print("🚫 expected가 Standard에 없음 → 오류 제거:", expected)
+            continue
+
+        # --- (2) actual은 OCR 텍스트에 실제 존재해야 함 ---
         if actual and actual not in ocr_text:
-            print("🚫 actual 이 OCR 텍스트 안에 없음 → 이슈 제거:", actual)
+            print("🚫 actual이 OCR에 없음 → 오류 제거:", actual)
             continue
 
         filtered.append(issue)
 
     result["issues"] = filtered
     return result
+
 
 
 def mark_possible_ocr_error_issues(result, hard_drop_distance: int = 1, soft_drop_distance: int = 2):
