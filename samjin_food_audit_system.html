@@ -19,42 +19,45 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <!-- Noto Sans KR 폰트 (한글) -->
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
-    <style>
-        /* Inter 폰트를 기본으로 하되, 한글은 Noto Sans KR을 사용 */
-        body {
-            font-family: 'Inter', 'Noto Sans KR', sans-serif;
-        }
-        /* 로딩 스피너 스타일 */
-        .loader {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #3498db;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
+  <style>
+    /* 기본 폰트 설정 */
+    body {
+        font-family: 'Inter', 'Noto Sans KR', sans-serif;
+    }
 
-        /* (신규 Ver 5.0) '빨간펜' 하이라이트 스타일 */
-        .highlight-violation {
-            background-color: #FEE2E2; /* bg-red-100 */
-            color: #991B1B; /* text-red-800 */
-            font-weight: bold;
-            padding: 2px 0;
-            border-radius: 3px;
-        }
-        .highlight-typo {
-            background-color: #FEF3C7; /* bg-yellow-100 */
-            color: #92400E; /* text-yellow-800 */
-            font-weight: bold;
-            padding: 2px 0;
-            border-radius: 3px;
-        }
-        
-    </style>
+    /* 로딩 스피너 */
+    .loader {
+        border: 4px solid #f3f3f3;
+        border-top: 4px solid #3498db;
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+
+    /* (신규 Ver 5.0) 빨간펜 하이라이트 스타일 */
+    .highlight-violation {
+        background-color: #FEE2E2; /* 연한 빨간 배경 */
+        color: #991B1B;             /* 진한 빨간 텍스트 */
+        font-weight: bold;
+        padding: 2px 4px;
+        border-radius: 4px;
+    }
+
+    .highlight-typo {
+        background-color: #FEF3C7; /* 연한 노란 배경 */
+        color: #92400E;            /* 진한 노란 텍스트 */
+        font-weight: bold;
+        padding: 2px 4px;
+        border-radius: 4px;
+    }
+</style>
+
 </head>
 <body class="bg-gray-100">
 
@@ -558,6 +561,7 @@
 </body>
 
 </html>
+
 
 
 
