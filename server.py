@@ -4,6 +4,8 @@ import io
 import glob
 import traceback
 import base64
+import difflib
+
 import pandas as pd
 from flask import Flask, request, jsonify, render_template, send_file
 from flask_cors import CORS
@@ -53,10 +55,10 @@ def to_image_data_url(img_bytes: bytes, mime_type: str = "image/png") -> str:
     return f"data:{mime_type};base64,{b64}"
 
 
-def call_openai_from_parts(parts, json_mode=True) -> str:
+def call_openai_from_parts(parts, json_mode: bool = True) -> str:
     """
     Gemini의 model.generate_content(parts)를 대체하는 OpenAI 호출.
-    - parts: 문자열, PIL.Image.Image 섞여 있는 리스트 (기존 코드 그대로 사용)
+    - parts: 문자열, PIL.Image.Image 섞여 있는 리스트
     - json_mode: True면 "JSON만 출력"이라고 시스템 지시를 앞에 붙임
     - 반환값: ChatGPT가 반환한 텍스트 전체 (string)
     """
@@ -66,11 +68,12 @@ def call_openai_from_parts(parts, json_mode=True) -> str:
     content = []
 
     if json_mode:
+        # JSON 강제 지시
         content.append({
             "type": "input_text",
             "text": (
                 "항상 유효한 JSON만 출력하세요. "
-                "설명, 마크다운, 코드블록, 자연어 문장은 절대 포함하지 마세요."
+                "마크다운, 코드블록, 설명 문장은 절대 포함하지 마세요."
             ),
         })
 
@@ -85,10 +88,10 @@ def call_openai_from_parts(parts, json_mode=True) -> str:
             data_url = to_image_data_url(buf.getvalue(), mime_type=f"image/{fmt.lower()}")
             content.append({
                 "type": "input_image",
-                "image_url": data_url,
+                "image_url": {"url": data_url},
             })
         else:
-            # dict 등 다른 타입은 필요시 여기서 처리 (현재는 무시)
+            # dict 등 기타 타입은 필요시 확장
             pass
 
     resp = client.responses.create(
@@ -102,7 +105,7 @@ def call_openai_from_parts(parts, json_mode=True) -> str:
     result_chunks = []
     for out in getattr(resp, "output", []):
         for c in getattr(out, "content", []):
-            if hasattr(c, "text") and c.text:
+            if getattr(c, "type", None) == "output_text" and getattr(c, "text", None):
                 result_chunks.append(c.text)
     result_text = "".join(result_chunks).strip()
     return result_text
@@ -203,11 +206,18 @@ PROMPT_CREATE_STANDARD = """
 
 PROMPT_VERIFY_DESIGN = """
 당신은 대한민국 최고의 식품표시사항 정밀 감사 AI이자 자동 채점기입니다.
-제공된 [Standard(기준서)]와 [Design OCR(raw_text 또는 이미지)]를 1:1 정밀 대조하여 채점하세요.
+제공된 [Standard(기준서)]와 [Design OCR(raw_text)]를 1:1 정밀 대조하여 채점하세요.
+
+[입력]
+1) Standard: JSON 형식의 기준 데이터
+2) Design OCR 텍스트: 서버에서 미리 추출한 순수 텍스트 (이미지 OCR 결과)
 
 [절대 규칙]
-- Standard와 디자인에 있는 텍스트를 절대로 임의로 수정하거나 보정하지 마세요.
+- Standard와 디자인 OCR 텍스트에 **실제로 존재하는 내용만** 사용하세요.
 - 맞춤법, 띄어쓰기, 숫자, 단위, 특수문자 차이를 그대로 기반으로만 비교하세요.
+- 존재하지 않는 “500g”, “솔비톨” 등의 값은 상상해서 만들지 마세요.
+- "expected" 값은 반드시 Standard에서 실제로 존재하는 문자열을 그대로 복사해서 사용해야 합니다.
+- "actual" 값은 반드시 디자인 OCR 텍스트(design_ocr_text)에서 실제로 존재하는 문자열을 그대로 복사해서 사용해야 합니다.
 
 [감점 기준표 (총점 100점에서 시작)]
 1. 원재료명 오류 (-5점/건)
@@ -217,7 +227,7 @@ PROMPT_VERIFY_DESIGN = """
 
 [출력 형식 - JSON만 출력]
 {
-  "design_ocr_text": "디자인 전체 텍스트(raw_text 또는 OCR 결과)",
+  "design_ocr_text": "디자인 전체 텍스트(raw_text 또는 OCR 결과) 그대로",
   "score": 100,
   "law_compliance": {
     "status": "compliant" | "violation",
@@ -228,8 +238,8 @@ PROMPT_VERIFY_DESIGN = """
       "type": "Critical" | "Minor" | "Law_Violation",
       "location": "항목명 (예: 영양정보)",
       "issue": "오류 상세 설명",
-      "expected": "기준서 데이터",
-      "actual": "디자인에서 발견된 틀린 텍스트 (원문 일부)",
+      "expected": "기준서 데이터에서 실제 발췌한 텍스트",
+      "actual": "디자인 OCR에서 실제 발췌한 틀린 텍스트",
       "suggestion": "수정 제안"
     }
   ]
@@ -286,17 +296,85 @@ def clean_ai_response(data):
     else:
         return data
 
-# --- OCR 폴백 (선택적) ---
-def ocr_bytes_to_text(image_bytes):
+
+# --- ChatGPT Vision OCR (우선 사용) ---
+def ocr_image_bytes_with_chatgpt(image_bytes: bytes) -> str:
+    """
+    ChatGPT 멀티모달로 OCR만 수행 (텍스트만 그대로 달라고 강하게 지시).
+    실패하면 빈 문자열 반환.
+    """
+    if client is None:
+        return ""
+
+    try:
+        img = PIL.Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        # 너무 크면 약간 줄이기
+        max_size = 1600
+        if max(img.size) > max_size:
+            ratio = max_size / max(img.size)
+            new_size = (int(img.width * ratio), int(img.height * ratio))
+            img = img.resize(new_size, PIL.Image.Resampling.LANCZOS)
+            print(f"📉 OCR용 이미지 리사이즈: {new_size}")
+
+        ocr_prompt = """
+이 이미지는 식품 포장지/라벨 사진입니다.
+**이미지 안에 보이는 모든 글자를 그대로 적어 주세요.**
+
+[중요]
+- 줄바꿈, 공백, 숫자, 기호를 최대한 원문 그대로 유지하세요.
+- 의미를 요약하거나 설명하지 말고, 순수 텍스트만 출력하세요.
+- 한국어는 한국어로, 영어/숫자는 있는 그대로 적어 주세요.
+"""
+        parts = [ocr_prompt, img]
+        text = call_openai_from_parts(parts, json_mode=False).strip()
+
+        # 혹시 코드블록으로 오면 제거
+        if text.startswith("```"):
+            lines = text.split("\n")
+            if lines and lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip().startswith("```"):
+                lines = lines[:-1]
+            text = "\n".join(lines).strip()
+
+        if text:
+            print("✅ ChatGPT OCR 성공 (vision)")
+            return text
+        else:
+            print("⚠️ ChatGPT OCR 결과가 비어 있음")
+            return ""
+    except Exception as e:
+        print("❌ ChatGPT OCR 실패:", e)
+        return ""
+
+
+# --- OCR 폴백 ---
+def ocr_bytes_to_text(image_bytes: bytes) -> str:
+    """
+    1순위: ChatGPT Vision OCR
+    2순위: pytesseract (설치된 경우)
+    """
+    # 1) ChatGPT Vision
+    text = ocr_image_bytes_with_chatgpt(image_bytes)
+    if text:
+        return text
+
+    # 2) pytesseract
     if not TESSERACT_AVAILABLE:
         return ""
     try:
         img = PIL.Image.open(io.BytesIO(image_bytes)).convert("RGB")
         text = pytesseract.image_to_string(img, lang='kor+eng')
+        text = text.strip()
+        if text:
+            print("✅ pytesseract OCR 성공 (폴백)")
+        else:
+            print("⚠️ pytesseract OCR 결과가 비어 있음")
         return text
     except Exception as e:
         print("OCR 폴백 실패:", e)
         return ""
+
 
 # --- 파일 처리 함수 ---
 def process_file_to_part(file_storage):
@@ -352,7 +430,7 @@ def process_file_to_part(file_storage):
 
 # --- 이미지에서 원재료 정보 추출 (ChatGPT + OCR 폴백 결합) ---
 def extract_ingredient_info_from_image(image_file):
-    """원재료 표시사항 이미지에서 필요한 정보만 추출 (우선 ChatGPT, 실패 시 pytesseract OCR 폴백)"""
+    """원재료 표시사항 이미지에서 필요한 정보만 추출 (우선 ChatGPT, 실패 시 OCR 폴백)"""
     try:
         image_data = image_file.read()
         image_file.seek(0)
@@ -366,7 +444,7 @@ def extract_ingredient_info_from_image(image_file):
         print("--------------------------------------------------")
 
         # ChatGPT 응답이 완전 비었으면 바로 OCR 폴백
-        if (not result_text) and TESSERACT_AVAILABLE:
+        if (not result_text):
             ocr_text = ocr_bytes_to_text(image_data)
             if ocr_text:
                 return {"ocr_fallback_text": ocr_text}
@@ -388,10 +466,9 @@ def extract_ingredient_info_from_image(image_file):
             print(f"원재료 정보 JSON 파싱 실패: {e}")
             print("응답 텍스트 일부:", result_text[:1000])
             # JSON이 망가졌을 때도 OCR 폴백 한 번 더 시도
-            if TESSERACT_AVAILABLE:
-                ocr_text = ocr_bytes_to_text(image_data)
-                if ocr_text:
-                    return {"ocr_fallback_text": ocr_text}
+            ocr_text = ocr_bytes_to_text(image_data)
+            if ocr_text:
+                return {"ocr_fallback_text": ocr_text}
             return None
 
     except Exception as e:
@@ -400,396 +477,93 @@ def extract_ingredient_info_from_image(image_file):
         return None
 
 
-def create_standard_excel(data):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        if 'product_info' in data:
-            product_df = pd.DataFrame([data['product_info']])
-            product_df.to_excel(writer, sheet_name='제품정보', index=False)
-        if 'ingredients' in data:
-            ingredients_data = []
-            if 'structured_list' in data['ingredients']:
-                for idx, item in enumerate(data['ingredients']['structured_list'], 1):
-                    ingredients_data.append({'순번': idx, '원재료명': item})
-            ingredients_df = pd.DataFrame(ingredients_data)
-            if not ingredients_df.empty:
-                ingredients_df.to_excel(writer, sheet_name='원재료명', index=False)
-            if 'continuous_text' in data['ingredients']:
-                continuous_df = pd.DataFrame([{'원재료명_연속텍스트': data['ingredients']['continuous_text']}])
-                continuous_df.to_excel(writer, sheet_name='원재료명_연속텍스트', index=False)
-        if 'allergens' in data:
-            allergens_data = []
-            if 'contains' in data['allergens']:
-                allergens_data.append({'항목': '함유 알레르기 유발물질', '내용': ', '.join(data['allergens']['contains'])})
-            if 'manufacturing_facility' in data['allergens']:
-                allergens_data.append({'항목': '제조시설 안내', '내용': data['allergens']['manufacturing_facility']})
-            if allergens_data:
-                allergens_df = pd.DataFrame(allergens_data)
-                allergens_df.to_excel(writer, sheet_name='알레르기정보', index=False)
-        if 'nutrition_info' in data and 'per_100g' in data['nutrition_info']:
-            nutrition_data = []
-            nut = data['nutrition_info']['per_100g']
-            if 'calories' in nut:
-                nutrition_data.append({'영양성분': '총 열량', '100g 당': nut['calories'], '1일 영양성분 기준치에 대한 비율(%)': '-'})
-            for key, value in nut.items():
-                if key != 'calories' and isinstance(value, dict):
-                    nutrition_data.append({'영양성분': key, '100g 당': value.get('amount', ''), '1일 영양성분 기준치에 대한 비율(%)': value.get('daily_value', '')})
-            if nutrition_data:
-                nutrition_df = pd.DataFrame(nutrition_data)
-                nutrition_df.to_excel(writer, sheet_name='영양정보', index=False)
-        if 'manufacturer' in data:
-            manufacturer_df = pd.DataFrame([data['manufacturer']])
-            manufacturer_df.to_excel(writer, sheet_name='제조원정보', index=False)
-        if 'precautions' in data:
-            precautions_df = pd.DataFrame([{'주의사항': item} for item in data['precautions']])
-            precautions_df.to_excel(writer, sheet_name='주의사항', index=False)
-        if 'details' in data and data['details']:
-            details_df = pd.DataFrame(data['details'])
-            details_df.to_excel(writer, sheet_name='원재료상세', index=False)
-    output.seek(0)
-    return output
+# --- 헛소리 / OCR 노이즈 필터 ---
 
-# --- 라우트 ---
-@app.route('/')
-def index():
-    return render_template('index.html')
+def filter_issues_by_text_evidence(result, standard_json: str, ocr_text: str):
+    """
+    LLM 헛소리 방지 필터:
 
-@app.route('/api/create-standard', methods=['POST'])
-def create_standard():
-    print("⚙️ 1단계: 기준 데이터 생성 시작...")
-    excel_file = request.files.get('excel_file')
-    raw_images = request.files.getlist('raw_images')
-    if not excel_file:
-        return jsonify({"error": "배합비 엑셀 파일이 필요합니다."}), 400
+    1) expected(정답)는 반드시 Standard JSON 텍스트 안에 실제 존재해야 함
+    2) actual(실제)는 반드시 OCR 텍스트 안에 실제 존재해야 함
 
-    parts = []
-    enhanced_prompt = PROMPT_CREATE_STANDARD
-    if ALL_LAW_TEXT:
-        enhanced_prompt += f"\n\n--- [참고 법령] ---\n{ALL_LAW_TEXT}\n--- [법령 끝] ---\n"
-    parts.append(enhanced_prompt)
-
-    excel_part = process_file_to_part(excel_file)
-    if excel_part:
-        if isinstance(excel_part, dict) and 'text' in excel_part:
-            parts.append(excel_part['text'])
-        else:
-            parts.append(excel_part)
-
-    ingredient_info_list = []
-    # 원재료 이미지들에 대해 ChatGPT + OCR 추출
-    for img in raw_images[:15]:
-        print(f"📷 원재료 이미지 처리 중: {img.filename}")
-        ingredient_info = extract_ingredient_info_from_image(img)
-        if ingredient_info:
-            ingredient_info_list.append(ingredient_info)
-
-    if ingredient_info_list:
-        ingredients_text = "--- [원재료 표시사항에서 추출한 정보] ---\n"
-        for idx, info in enumerate(ingredient_info_list, 1):
-            ingredients_text += f"\n[원재료 {idx}]\n"
-            ingredients_text += json.dumps(info, ensure_ascii=False, indent=2)
-            ingredients_text += "\n"
-        ingredients_text += "--- [원재료 정보 끝] ---\n"
-        parts.append(ingredients_text)
-
-    print(f"📂 처리 중: 엑셀 1개 + 원재료 이미지 {len(raw_images)}장 (정보 추출 완료)")
+    둘 중 하나라도 없으면 그 issue 는 제거.
+    또, expected 가 OCR 에도 그대로 있고 actual 과 매우 비슷하면
+    LLM이 쓸데없이 짝을 잘못 맞춘 것으로 보고 제거.
+    """
+    if not isinstance(result, dict):
+        return result
 
     try:
-        result_text = call_openai_from_parts(parts, json_mode=True)
+        std_obj = json.loads(standard_json) if standard_json else {}
+        std_text = json.dumps(std_obj, ensure_ascii=False)
+    except Exception:
+        std_text = standard_json or ""
 
-        print("---- create-standard 응답(원문 일부) ----")
-        print(result_text[:4000])
-        print("------------------------------------")
+    ocr_text = ocr_text or ""
 
-        if result_text.startswith("```json"):
-            result_text = result_text[7:]
-            if result_text.endswith("```"):
-                result_text = result_text[:-3]
-        elif result_text.startswith("```"):
-            lines = result_text.split("\n")
-            if lines and lines[0].startswith("```"):
-                result_text = "\n".join(lines[1:])
-            if result_text.endswith("```"):
-                result_text = result_text[:-3]
-        result_text = result_text.strip()
+    issues = result.get("issues", [])
+    if not isinstance(issues, list):
+        return result
 
-        try:
-            result = json.loads(result_text)
-        except json.JSONDecodeError as json_err:
-            print(f"❌ JSON 파싱 오류: {json_err}")
-            print(f"응답 텍스트 (처음 2000자): {result_text[:2000]}")
-            try:
-                result_text_fixed = result_text.replace(',\n}', '\n}').replace(',\n]', '\n]')
-                result = json.loads(result_text_fixed)
-                print("✅ JSON 수정 후 파싱 성공")
-            except Exception as e:
-                print("최종 JSON 파싱 실패:", e)
-                return jsonify({"error": f"JSON 파싱 실패: {str(json_err)}. 응답의 일부: {result_text[:400]}..."}), 500
+    def approx_distance(a: str, b: str) -> int:
+        if not a or not b:
+            return 999
+        s = difflib.SequenceMatcher(None, a, b)
+        return int(round((1.0 - s.ratio()) * max(len(a), len(b))))
 
-        return jsonify(result)
-
-    except Exception as e:
-        print(f"❌ 오류 발생: {e}")
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/download-standard-excel', methods=['POST'])
-def download_standard_excel():
-    try:
-        data = request.get_json()
-        if not data:
-            return jsonify({"error": "기준 데이터가 없습니다."}), 400
-        excel_buffer = create_standard_excel(data)
-        product_name = data.get('product_info', {}).get('product_name', '기준데이터') or data.get('product_name', '기준데이터')
-        filename = f"{product_name}_기준데이터.xlsx"
-        return send_file(
-            excel_buffer,
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            as_attachment=True,
-            download_name=filename
-        )
-    except Exception as e:
-        print(f"❌ 엑셀 다운로드 오류: {e}")
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/read-standard-excel', methods=['POST'])
-def read_standard_excel():
-    try:
-        excel_file = request.files.get('excel_file')
-        if not excel_file:
-            return jsonify({"error": "엑셀 파일이 필요합니다."}), 400
-        df_dict = pd.read_excel(io.BytesIO(excel_file.read()), sheet_name=None, engine='openpyxl')
-        result = {}
-        if '제품정보' in df_dict:
-            product_info = df_dict['제품정보'].to_dict('records')[0]
-            result['product_info'] = product_info
-        first_sheet_name = list(df_dict.keys())[0]
-        first_sheet_df = df_dict[first_sheet_name]
-        if '원재료명' in df_dict:
-            ingredients_list = df_dict['원재료명']['원재료명'].dropna().tolist()
-            result['ingredients'] = {'structured_list': ingredients_list, 'continuous_text': ', '.join(ingredients_list)}
-        elif '원재료명_연속텍스트' in df_dict:
-            continuous_text = df_dict['원재료명_연속텍스트']['원재료명_연속텍스트'].iloc[0]
-            result['ingredients'] = {'structured_list': continuous_text.split(', '), 'continuous_text': continuous_text}
-        elif not first_sheet_df.empty:
-            first_column = first_sheet_df.columns[0]
-            if '원재료명' in first_sheet_df.columns:
-                ingredients_list = first_sheet_df['원재료명'].dropna().tolist()
-            else:
-                ingredients_list = first_sheet_df[first_column].dropna().astype(str).tolist()
-            if ingredients_list:
-                result['ingredients'] = {'structured_list': ingredients_list, 'continuous_text': ', '.join(ingredients_list)}
-        if '알레르기정보' in df_dict:
-            allergens_df = df_dict['알레르기정보']
-            result['allergens'] = {}
-            for _, row in allergens_df.iterrows():
-                if row['항목'] == '함유 알레르기 유발물질':
-                    result['allergens']['contains'] = row['내용'].split(', ')
-                elif row['항목'] == '제조시설 안내':
-                    result['allergens']['manufacturing_facility'] = row['내용']
-        if '영양정보' in df_dict:
-            nutrition_df = df_dict['영양정보']
-            per_100g = {}
-            for _, row in nutrition_df.iterrows():
-                if row['영양성분'] == '총 열량':
-                    per_100g['calories'] = row['100g 당']
-                else:
-                    per_100g[row['영양성분']] = {'amount': row['100g 당'], 'daily_value': row['1일 영양성분 기준치에 대한 비율(%)']}
-            result['nutrition_info'] = {'per_100g': per_100g}
-        if '제조원정보' in df_dict:
-            result['manufacturer'] = df_dict['제조원정보'].to_dict('records')[0]
-        if '주의사항' in df_dict:
-            result['precautions'] = df_dict['주의사항']['주의사항'].tolist()
-        if '원재료상세' in df_dict:
-            result['details'] = df_dict['원재료상세'].to_dict('records')
-        return jsonify(result)
-    except Exception as e:
-        print(f"❌ 엑셀 읽기 오류: {e}")
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/verify-design', methods=['POST'])
-def verify_design():
-    print("🕵️‍♂️ 2단계: 디자인 검증 시작...")
-    design_file = request.files.get('design_file')
-    standard_excel = request.files.get('standard_excel')
-    standard_json = request.form.get('standard_data')
-    if not design_file:
-        return jsonify({"error": "디자인 파일이 필요합니다."}), 400
-    if not standard_excel and not standard_json:
-        return jsonify({"error": "기준 데이터(엑셀 파일 또는 JSON)가 필요합니다."}), 400
-
-    if standard_excel and not standard_json:
-        try:
-            df_dict = pd.read_excel(io.BytesIO(standard_excel.read()), sheet_name=None, engine='openpyxl')
-            if not df_dict:
-                return jsonify({"error": "엑셀 파일이 비어있습니다."}), 400
-            first_sheet_name = list(df_dict.keys())[0]
-            first_sheet_df = df_dict[first_sheet_name]
-            standard_data = {}
-            if not first_sheet_df.empty:
-                first_column = first_sheet_df.columns[0]
-                if '원재료명' in first_sheet_df.columns:
-                    ingredients_list = first_sheet_df['원재료명'].dropna().tolist()
-                elif first_column:
-                    ingredients_list = first_sheet_df[first_column].dropna().astype(str).tolist()
-                else:
-                    ingredients_list = first_sheet_df.iloc[:, 0].dropna().astype(str).tolist()
-                if ingredients_list:
-                    standard_data = {'ingredients': {'structured_list': ingredients_list, 'continuous_text': ', '.join(ingredients_list)}}
-                else:
-                    return jsonify({"error": "엑셀 파일의 첫 번째 시트에 데이터가 없습니다."}), 400
-            else:
-                return jsonify({"error": "엑셀 파일의 첫 번째 시트가 비어있습니다."}), 400
-            standard_json = json.dumps(standard_data, ensure_ascii=False)
-        except Exception as e:
-            print(f"❌ 엑셀 파일 읽기 오류: {e}")
-            traceback.print_exc()
-            return jsonify({"error": f"엑셀 파일 읽기 실패: {str(e)}"}), 400
-
-    parts = []
-    enhanced_prompt = PROMPT_VERIFY_DESIGN
-    if ALL_LAW_TEXT:
-        enhanced_prompt += f"\n\n--- [참고 법령] ---\n{ALL_LAW_TEXT}\n--- [법령 끝] ---\n"
-    parts.append(enhanced_prompt)
-    parts.append(f"\n--- [기준 데이터(Standard)] ---\n{standard_json}")
-
-    design_part = process_file_to_part(design_file)
-    if design_part:
-        parts.append(design_part)
-
-    try:
-        result_text = call_openai_from_parts(parts, json_mode=True)
-
-        print("---- verify-design 응답(원문 일부) ----")
-        print(result_text[:4000])
-        print("----------------------------------")
-
-        if result_text.startswith("```json"):
-            result_text = result_text[7:]
-            if result_text.endswith("```"):
-                result_text = result_text[:-3]
-        elif result_text.startswith("```"):
-            lines = result_text.split("\n")
-            if lines and lines[0].startswith("```"):
-                result_text = "\n".join(lines[1:])
-            if result_text.endswith("```"):
-                result_text = result_text[:-3]
-        result_text = result_text.strip()
-
-        try:
-            result = json.loads(result_text)
-        except json.JSONDecodeError as json_err:
-            print(f"❌ JSON 파싱 오류: {json_err}")
-            print(f"응답 텍스트 (처음 2000자): {result_text[:2000]}")
-            try:
-                result_text_fixed = result_text.replace(',\n}', '\n}').replace(',\n]', '\n]')
-                result = json.loads(result_text_fixed)
-                print("✅ JSON 수정 후 파싱 성공")
-            except Exception as e:
-                print("최종 JSON 파싱 실패:", e)
-                return jsonify({"error": f"JSON 파싱 실패: {str(json_err)}. 응답의 일부: {result_text[:400]}..."}), 500
-
-        result = clean_ai_response(result)
-        return jsonify(result)
-
-    except Exception as e:
-        print(f"❌ 검증 오류: {e}")
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/upload-qa', methods=['POST'])
-def upload_qa():
-    print("📋 QA 자료 업로드 및 식품표시사항 작성 시작...")
-    qa_files = request.files.getlist('qa_files')
-    if not qa_files or len(qa_files) == 0:
-        return jsonify({"error": "QA 자료 파일이 필요합니다."}), 400
-
-    parts = []
-    qa_prompt = """
-당신은 식품표시사항 작성 전문가입니다.
-제공된 QA 자료를 분석하여 법률을 준수하는 식품표시사항을 작성하세요.
-
-[출력 양식 - JSON만 출력]
-{
-  "product_name": "제품명",
-  "label_text": "작성된 식품표시사항 전체 텍스트",
-  "law_compliance": {
-    "status": "compliant" | "needs_review",
-    "issues": ["법률 검토 사항 목록"]
-  },
-  "sections": {
-    "ingredients": "원재료명",
-    "nutrition": "영양정보",
-    "allergens": "알레르기 유발물질",
-    "storage": "보관방법",
-    "manufacturer": "제조사 정보"
-  }
-}
-"""
-    if ALL_LAW_TEXT:
-        qa_prompt += f"\n\n--- [참고 법령] ---\n{ALL_LAW_TEXT}\n--- [법령 끝] ---\n"
-    parts.append(qa_prompt)
-
-    for qa_file in qa_files[:20]:
-        file_part = process_file_to_part(qa_file)
-        if not file_part:
+    filtered = []
+    for issue in issues:
+        if not isinstance(issue, dict):
             continue
-        if isinstance(file_part, dict) and 'text' in file_part:
-            parts.append(file_part['text'])
-        else:
-            parts.append(file_part)
 
-    print(f"📂 QA 자료 처리 중: {len(qa_files)}개 파일")
-    try:
-        result_text = call_openai_from_parts(parts, json_mode=True)
+        expected = str(issue.get("expected", "") or "")
+        actual   = str(issue.get("actual", "") or "")
+        desc     = str(issue.get("issue", "") or "")
 
-        print("---- upload-qa 응답(원문 일부) ----")
-        print(result_text[:4000])
-        print("--------------------------------")
+        if not expected and not actual:
+            filtered.append(issue)
+            continue
 
-        if result_text.startswith("```json"):
-            result_text = result_text[7:]
-            if result_text.endswith("```"):
-                result_text = result_text[:-3]
-        elif result_text.startswith("```"):
-            lines = result_text.split("\n")
-            if lines and lines[0].startswith("```"):
-                result_text = "\n".join(lines[1:])
-            if result_text.endswith("```"):
-                result_text = result_text[:-3]
-        result_text = result_text.strip()
+        expected_in_std = bool(expected and expected in std_text)
+        expected_in_ocr = bool(expected and expected in ocr_text)
+        actual_in_std   = bool(actual   and actual   in std_text)
+        actual_in_ocr   = bool(actual   and actual   in ocr_text)
 
-        try:
-            result = json.loads(result_text)
-        except json.JSONDecodeError as json_err:
-            print(f"❌ JSON 파싱 오류: {json_err}")
-            print(f"응답 텍스트 (처음 2000자): {result_text[:2000]}")
-            try:
-                result_text_fixed = result_text.replace(',\n}', '\n}').replace(',\n]', '\n]')
-                result = json.loads(result_text_fixed)
-                print("✅ JSON 수정 후 파싱 성공")
-            except Exception as e:
-                print("최종 JSON 파싱 실패:", e)
-                return jsonify({"error": f"JSON 파싱 실패: {str(json_err)}. 응답의 일부: {result_text[:400]}..."}), 500
+        # 1) 기본: expected ∈ Standard, actual ∈ OCR
+        if expected and not expected_in_std:
+            print("🚫 expected 가 Standard 안에 없음 → 이슈 제거:", expected)
+            continue
+        if actual and not actual_in_ocr:
+            print("🚫 actual 이 OCR 텍스트 안에 없음 → 이슈 제거:", actual)
+            continue
 
-        return jsonify(result)
+        # 2) expected 도 OCR 에 그대로 있고 actual 이 비슷한 문자열 → 짝짓기 헛소리 가능성
+        if expected and actual:
+            dist = approx_distance(expected, actual)
+            min_len = min(len(expected), len(actual))
+            if min_len >= 3 and dist <= 2 and expected_in_ocr and not actual_in_std:
+                print("🚫 expected 는 OCR 에 존재 & actual 은 비슷 → LLM 짝짓기 오류, 이슈 제거:", {
+                    "expected": expected,
+                    "actual": actual,
+                    "distance": dist,
+                })
+                continue
 
-    except Exception as e:
-        print(f"❌ QA 자료 처리 오류: {e}")
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        # 3) 둘 다 Standard/OCR 양쪽에 다 있으면 너무 애매 → 제거
+        if (expected and expected_in_std and expected_in_ocr) and \
+           (actual   and actual_in_std   and actual_in_ocr):
+            print("🚫 expected/actual 이 Standard/OCR 양쪽에 모두 존재 → 애매, 이슈 제거:", {
+                "expected": expected,
+                "actual": actual,
+            })
+            continue
 
-if __name__ == '__main__':
-    print("🚀 삼진어묵 식품표시사항 완성 플랫폼 V3.0 (ChatGPT+OCR 버전) 가동")
-    from waitress import serve
-    serve(
-        app,
-        host='0.0.0.0',
-        port=8080,
-        threads=4,
-        channel_timeout=600
-    )
+        filtered.append(issue)
+
+    result["issues"] = filtered
+    return result
 
 
+def mark_possible_ocr_error_issues(result, hard_drop_distance: int = 1, soft_drop_distance: int = 2):
+    """
+    expected / actual 간 차이가 너무 작으면 OCR 노이즈로 처리.
