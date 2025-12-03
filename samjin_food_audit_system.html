@@ -517,10 +517,44 @@
 
         // --- 초기 상태 설정 ---
         analyzeButton.disabled = true; // 파일이 선택될 때까지 비활성화
-        showPage('login-page'); // 첫 화면은 로그인 페이지로
+        showPage('results-page'); // 테스트 위해 바로 결과 페이지로
 
     </script>
+    <script>
+    window.addEventListener('DOMContentLoaded', () => {
+        // 테스트용 더미 결과 데이터 (빨간펜 작동 확인용)
+        const testResult = {
+            fileName: "label_test.jpg",
+            status: "위반 있음",
+            typos: 1,
+            violations: 2,
+            imageUrl: "https://placehold.co/600x400?text=Test+Image",
+            ocrText: "제품명: 맛잇는 두유\n내용량: 200ml\n영양정보: 단백질 3g\n주의사항: 이 제품은 우유를 사용하지 않습니다.",
+            analysis_list: [
+                {
+                    type: "typo",
+                    text_original: "맛잇는",
+                    description: "오탈자 감지: '맛있는'으로 예상됩니다.",
+                    suggestion: "맛있는",
+                    reference: "표시기준 제5조"
+                },
+                {
+                    type: "violation",
+                    text_original: "우유를 사용하지 않습니다",
+                    description: "우유 미포함 문구는 표시기준에 따라 검토 필요.",
+                    suggestion: "이 제품은 우유를 사용하지 않았습니다.",
+                    reference: "표시기준 제8조"
+                }
+            ]
+        };
+
+        // 수동으로 결과 표시 함수 호출
+        displayResults(testResult);
+    });
+</script>
+
 </body>
 
 </html>
+
 
