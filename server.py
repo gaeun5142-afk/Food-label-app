@@ -185,12 +185,19 @@ def verify_design():
             label_text = gpt_json.get("label_text", "")
         except:
             label_text = gpt_response  # 실패 시 전체 응답 사용
-        print("📎 LABEL TEXT (하이라이트 대상):")
-        print(label_text)  
+         # ✅ 여기에 디버깅 print 추가
+        print("🔍 OCR TEXT:")
+        print(ocr_text)
+
+        print("🧾 GPT 응답 전체:")
+        print(gpt_response)
+
+        print("✅ label_text 포함 여부:", label_text in ocr_text)
+        print("🖍️ HIGHLIGHTED HTML:")
+        print(highlight_matches(ocr_text, [label_text]))
 
         # 3️⃣ 빨간펜 하이라이트 생성
-        highlighted_html = highlight_matches(ocr_text, [label_text])
-
+        highlighted_html = generate_highlighted_html(ocr_text, label_text)
         return jsonify({
             "design_ocr_text": ocr_text,
             "design_ocr_highlighted_html": highlighted_html,
