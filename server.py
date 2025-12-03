@@ -168,18 +168,25 @@ def verify_design():
         # 1️⃣ OCR 수행 (간단히)
         if TESSERACT_AVAILABLE:
             ocr_text = pytesseract.image_to_string(img, lang="kor+eng").strip()
+            print("🔍 OCR TEXT:")
+            print(ocr_text)
+
         else:
             ocr_text = "OCR 결과 없음 (Tesseract 미설치)"
 
         # 2️⃣ OpenAI 응답 (간단 예시)
         prompt = f"다음 식품 라벨 내용을 확인하고 올바르게 수정하거나 규정 위반 여부를 알려줘:\n\n{ocr_text}\n\n{ALL_LAW_TEXT}"
         gpt_response = call_openai_from_parts([prompt])
+        print("📩 GPT RESPONSE:")
+        print(gpt_response)
 
         try:
             gpt_json = json.loads(gpt_response)
             label_text = gpt_json.get("label_text", "")
         except:
             label_text = gpt_response  # 실패 시 전체 응답 사용
+        print("📎 LABEL TEXT (하이라이트 대상):")
+        print(label_text)  
 
         # 3️⃣ 빨간펜 하이라이트 생성
         highlighted_html = generate_highlighted_html(ocr_text, label_text)
