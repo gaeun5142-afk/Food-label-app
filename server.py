@@ -376,6 +376,153 @@ def ocr_bytes_to_text(image_bytes: bytes) -> str:
         return ""
 
 
+# --- OCR 3회 실행 및 결과 비교 ---
+def ocr_multiple_times(image_bytes: bytes, num_runs: int = 3) -> list:
+    """
+    OCR을 여러 번 실행하여 결과 리스트 반환
+    """
+    results = []
+    for i in range(num_runs):
+        print(f"🔄 OCR 실행 {i+1}/{num_runs}...")
+        text = ocr_bytes_to_text(image_bytes)
+        if text:
+            results.append(text)
+        else:
+            print(f"⚠️ OCR 실행 {i+1} 실패")
+    return results
+
+
+def verify_with_ocr(ocr_text: str, standard_json: str) -> dict:
+    """
+    OCR 텍스트와 Standard를 비교하여 검증 결과 반환
+    """
+    if not ocr_text:
+        return {"issues": [], "design_ocr_text": ""}
+    
+    try:
+        # AI 검증 수행
+        enhanced_prompt = PROMPT_VERIFY_DESIGN
+        if ALL_LAW_TEXT:
+            enhanced_prompt += f"\n\n--- [참고 법령] ---\n{ALL_LAW_TEXT}\n--- [법령 끝] ---\n"
+        
+        parts = [
+            enhanced_prompt,
+            f"\n--- [기준 데이터(Standard)] ---\n{standard_json}",
+            f"\n--- [디자인 OCR 텍스트] ---\n{ocr_text}"
+        ]
+        
+        result_text = call_openai_from_parts(parts, json_mode=True).strip()
+        
+        # JSON 파싱
+        if result_text.startswith("```json"):
+            result_text = result_text[7:]
+            if result_text.endswith("```"):
+                result_text = result_text[:-3]
+        elif result_text.startswith("```"):
+            lines = result_text.split("\n")
+            if lines and lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip().startswith("```"):
+                lines = lines[:-1]
+            result_text = "\n".join(lines).strip()
+        
+        result = json.loads(result_text)
+        result = clean_ai_response(result)
+        
+        return result
+    except Exception as e:
+        print(f"❌ 검증 오류: {e}")
+        traceback.print_exc()
+        return {"issues": [], "design_ocr_text": ocr_text}
+
+
+def find_common_errors(ocr_results: list, standard_json: str) -> dict:
+    """
+    3번의 OCR 결과를 비교하여 2번 이상 일치하는 오류만 반환
+    """
+    if not ocr_results:
+        return {"ocr_text": "", "issues": [], "design_ocr_text": ""}
+    
+    # 각 OCR 결과에 대해 검증 수행
+    all_verification_results = []
+    for i, ocr_text in enumerate(ocr_results):
+        if not ocr_text:
+            continue
+        print(f"🔍 OCR 결과 {i+1} 검증 중...")
+        result = verify_with_ocr(ocr_text, standard_json)
+        all_verification_results.append({
+            "ocr_text": ocr_text,
+            "issues": result.get("issues", []),
+            "design_ocr_text": result.get("design_ocr_text", ocr_text)
+        })
+    
+    if not all_verification_results:
+        return {"ocr_text": ocr_results[0] if ocr_results else "", "issues": [], "design_ocr_text": ocr_results[0] if ocr_results else ""}
+    
+    # 2번 이상 일치하는 오류 찾기
+    # 각 issue를 키로 사용하여 카운트
+    issue_counts = {}
+    for verification in all_verification_results:
+        for issue in verification.get("issues", []):
+            # issue를 식별할 수 있는 키 생성 (location + expected + actual)
+            issue_key = (
+                str(issue.get("location", "")),
+                str(issue.get("expected", "")),
+                str(issue.get("actual", ""))
+            )
+            if issue_key not in issue_counts:
+                issue_counts[issue_key] = {
+                    "count": 0,
+                    "issue": issue
+                }
+            issue_counts[issue_key]["count"] += 1
+    
+    # 2번 이상 일치하는 오류만 필터링
+    common_issues = []
+    for key, data in issue_counts.items():
+        if data["count"] >= 2:
+            common_issues.append(data["issue"])
+            print(f"✅ 공통 오류 발견 ({data['count']}/3): {data['issue'].get('location', '')} - {data['issue'].get('issue', '')}")
+    
+    # 첫 번째 OCR 결과를 메인으로 사용
+    main_ocr = all_verification_results[0]["ocr_text"]
+    main_design_ocr = all_verification_results[0]["design_ocr_text"]
+    
+    return {
+        "ocr_text": main_ocr,
+        "issues": common_issues,
+        "design_ocr_text": main_design_ocr
+    }
+
+
+def highlight_ocr_errors(ocr_text: str, issues: list) -> str:
+    """
+    OCR 텍스트에서 오류 부분을 빨간색으로 하이라이트 처리
+    """
+    if not ocr_text or not issues:
+        return ocr_text
+    
+    # HTML 이스케이프 처리
+    import html
+    highlighted_text = html.escape(ocr_text)
+    
+    # 각 issue의 actual 텍스트를 빨간색으로 하이라이트
+    for issue in issues:
+        actual = issue.get("actual", "")
+        if actual and actual:
+            # HTML 이스케이프된 actual 찾기
+            escaped_actual = html.escape(actual)
+            if escaped_actual in highlighted_text:
+                # 빨간색 하이라이트 적용
+                highlighted = f'<span style="background-color:#ffcccc; color:#cc0000; font-weight:bold; padding:2px 4px; border-radius:3px;">{escaped_actual}</span>'
+                highlighted_text = highlighted_text.replace(escaped_actual, highlighted, 1)  # 첫 번째만 교체
+    
+    # 줄바꿈을 <br>로 변환
+    highlighted_text = highlighted_text.replace('\n', '<br>')
+    
+    return highlighted_text
+
+
 # --- 파일 처리 함수 ---
 def process_file_to_part(file_storage):
     """
@@ -567,3 +714,155 @@ def filter_issues_by_text_evidence(result, standard_json: str, ocr_text: str):
 def mark_possible_ocr_error_issues(result, hard_drop_distance: int = 1, soft_drop_distance: int = 2):
     """
     expected / actual 간 차이가 너무 작으면 OCR 노이즈로 처리.
+    """
+    # TODO: 구현 필요
+    return result
+
+
+# --- API 엔드포인트 ---
+@app.route('/api/verify-design', methods=['POST'])
+def verify_design():
+    """
+    디자인 검증 API
+    - OCR을 3번 실행
+    - 각 결과에 대해 검증 수행
+    - 2번 이상 일치하는 오류만 반환
+    - OCR 텍스트에 오류 하이라이트 적용
+    """
+    print("🕵️‍♂️ 디자인 검증 시작...")
+    
+    # 1. 디자인 파일 (PDF or 이미지)
+    design_file = request.files.get('design_file')
+    
+    # 2. 기준 데이터 (엑셀 파일 또는 JSON 문자열)
+    standard_excel = request.files.get('standard_excel')
+    standard_json = request.form.get('standard_data')
+    
+    if not design_file:
+        return jsonify({"error": "디자인 파일이 필요합니다."}), 400
+    
+    if not standard_excel and not standard_json:
+        return jsonify({"error": "기준 데이터(엑셀 파일 또는 JSON)가 필요합니다."}), 400
+    
+    # 기준 데이터 처리
+    if standard_excel:
+        # 엑셀 파일에서 읽기
+        try:
+            df_dict = pd.read_excel(io.BytesIO(standard_excel.read()), sheet_name=None, engine='openpyxl')
+            
+            if not df_dict:
+                return jsonify({"error": "엑셀 파일이 비어있습니다."}), 400
+            
+            # 첫 번째 시트 가져오기
+            first_sheet_name = list(df_dict.keys())[0]
+            first_sheet_df = df_dict[first_sheet_name]
+            
+            # 간단한 JSON 변환
+            standard_data = {}
+            if not first_sheet_df.empty:
+                first_column = first_sheet_df.columns[0]
+                if '원재료명' in first_sheet_df.columns:
+                    ingredients_list = first_sheet_df['원재료명'].dropna().tolist()
+                elif first_column:
+                    ingredients_list = first_sheet_df[first_column].dropna().astype(str).tolist()
+                else:
+                    ingredients_list = first_sheet_df.iloc[:, 0].dropna().astype(str).tolist()
+                
+                if ingredients_list:
+                    standard_data = {
+                        'ingredients': {
+                            'structured_list': ingredients_list,
+                            'continuous_text': ', '.join(ingredients_list)
+                        }
+                    }
+                else:
+                    return jsonify({"error": "엑셀 파일의 첫 번째 시트에 데이터가 없습니다."}), 400
+            else:
+                return jsonify({"error": "엑셀 파일의 첫 번째 시트가 비어있습니다."}), 400
+            
+            standard_json = json.dumps(standard_data, ensure_ascii=False)
+        except Exception as e:
+            print(f"❌ 엑셀 파일 읽기 오류: {e}")
+            traceback.print_exc()
+            return jsonify({"error": f"엑셀 파일 읽기 실패: {str(e)}"}), 400
+    
+    # 디자인 파일을 이미지로 변환
+    try:
+        design_data = design_file.read()
+        design_file.seek(0)
+        
+        # PDF인 경우 첫 페이지를 이미지로 변환
+        if design_file.mimetype == 'application/pdf' and PDF2IMAGE_AVAILABLE:
+            images = convert_from_bytes(design_data, dpi=200)
+            if images:
+                # PIL.Image를 bytes로 변환
+                img_bytes_io = io.BytesIO()
+                images[0].save(img_bytes_io, format='PNG')
+                design_image_bytes = img_bytes_io.getvalue()
+            else:
+                return jsonify({"error": "PDF에서 이미지를 추출할 수 없습니다."}), 400
+        elif design_file.mimetype.startswith('image/'):
+            design_image_bytes = design_data
+        else:
+            return jsonify({"error": "지원하지 않는 파일 형식입니다."}), 400
+        
+        # OCR을 3번 실행
+        print("🔄 OCR을 3번 실행합니다...")
+        ocr_results = ocr_multiple_times(design_image_bytes, num_runs=3)
+        
+        if not ocr_results:
+            return jsonify({"error": "OCR 실행에 실패했습니다."}), 500
+        
+        # 3번의 결과를 비교하여 2번 이상 일치하는 오류만 찾기
+        print("🔍 3번의 OCR 결과를 비교하여 공통 오류를 찾는 중...")
+        common_result = find_common_errors(ocr_results, standard_json)
+        
+        # 필터링 적용
+        common_result = filter_issues_by_text_evidence(
+            common_result, 
+            standard_json, 
+            common_result.get("ocr_text", "")
+        )
+        
+        # OCR 텍스트에 오류 하이라이트 적용
+        highlighted_html = highlight_ocr_errors(
+            common_result.get("design_ocr_text", common_result.get("ocr_text", "")),
+            common_result.get("issues", [])
+        )
+        
+        # 최종 결과 구성
+        final_result = {
+            "design_ocr_text": common_result.get("design_ocr_text", common_result.get("ocr_text", "")),
+            "design_ocr_highlighted_html": highlighted_html,
+            "score": 100 - (len(common_result.get("issues", [])) * 5),  # 간단한 점수 계산
+            "law_compliance": {
+                "status": "compliant" if len(common_result.get("issues", [])) == 0 else "violation",
+                "violations": []
+            },
+            "issues": common_result.get("issues", [])
+        }
+        
+        return jsonify(final_result)
+        
+    except Exception as e:
+        print(f"❌ 검증 오류: {e}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+if __name__ == '__main__':
+    print("🚀 삼진어묵 식품표시사항 완성 플랫폼 V3.0 가동")
+    print("   - 원부재료 표시사항 스마트 추출")
+    print("   - 법률 검토 기능 통합")
+    print("   - QA 자료 업로드 지원")
+    from waitress import serve
+
+    # [수정] channel_timeout을 늘려주세요 (기본값은 짦음)
+    # connection_limit도 넉넉히 줍니다.
+    serve(
+        app, 
+        host='0.0.0.0', 
+        port=8080,
+        threads=4,              # 동시 처리 개수
+        channel_timeout=600     # 600초(10분) 동안은 응답 없어도 안 끊고 기다림
+    )
