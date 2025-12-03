@@ -90,7 +90,7 @@ def call_openai_from_parts(parts, json_mode: bool = True) -> str:
                 "type": "input_image",
                 "image_url": {"url": data_url},
             })
-        else:
+else:
             # dict 등 기타 타입은 필요시 확장
             pass
 
@@ -164,43 +164,43 @@ PROMPT_CREATE_STANDARD = """
 
 [출력 양식 - JSON만 출력]
 {
-  "product_info": {
-    "product_name": "제품명",
+    "product_info": {
+        "product_name": "제품명",
     "food_type": "식품의 유형",
     "net_weight": "내용량",
     "expiration_date": "소비기한",
     "storage_method": "보관방법",
     "packaging_material": "포장재질",
-    "item_report_number": "품목보고번호",
+        "item_report_number": "품목보고번호",
     "front_calories": "전면부 총열량/문구"
-  },
-  "ingredients": {
+    },
+    "ingredients": {
     "structured_list": ["..."],
     "continuous_text": "원재료명, 원재료명2, ..."
-  },
-  "allergens": {
-    "contains": ["대두", "게"],
+    },
+    "allergens": {
+        "contains": ["대두", "게"],
     "manufacturing_facility": "제조시설 안내 문구"
-  },
-  "nutrition_info": {
-    "total_content": "1000 g",
-    "per_100g": {
+    },
+    "nutrition_info": {
+        "total_content": "1000 g",
+        "per_100g": {
       "calories": "130 Kcal"
     },
     "disclaimer": "영양정보 주의 문구 등"
-  },
-  "manufacturer": {
+    },
+    "manufacturer": {
     "name": "제조업체명",
     "address": "주소"
   },
   "precautions": ["주의사항1", "주의사항2"],
-  "law_compliance": {
-    "status": "compliant" | "needs_review",
-    "issues": ["법률 위반 사항 목록 (있는 경우)"]
-  },
-  "details": [
-    {"name": "원재료명", "ratio": "배합비율", "origin": "원산지", "sub_ingredients": "하위원료"}
-  ]
+    "law_compliance": {
+        "status": "compliant" | "needs_review",
+        "issues": ["법률 위반 사항 목록 (있는 경우)"]
+    },
+    "details": [
+        {"name": "원재료명", "ratio": "배합비율", "origin": "원산지", "sub_ingredients": "하위원료"}
+    ]
 }
 """
 
@@ -229,20 +229,20 @@ PROMPT_VERIFY_DESIGN = """
 {
   "design_ocr_text": "디자인 전체 텍스트(raw_text 또는 OCR 결과) 그대로",
   "score": 100,
-  "law_compliance": {
-    "status": "compliant" | "violation",
+    "law_compliance": {
+        "status": "compliant" | "violation",
     "violations": ["식품등의 표시기준 제X조 위반..."]
-  },
-  "issues": [
-    {
+    },
+    "issues": [
+        {
       "type": "Critical" | "Minor" | "Law_Violation",
       "location": "항목명 (예: 영양정보)",
       "issue": "오류 상세 설명",
       "expected": "기준서 데이터에서 실제 발췌한 텍스트",
       "actual": "디자인 OCR에서 실제 발췌한 틀린 텍스트",
       "suggestion": "수정 제안"
-    }
-  ]
+        }
+    ]
 }
 """
 
@@ -343,7 +343,7 @@ def ocr_image_bytes_with_chatgpt(image_bytes: bytes) -> str:
         else:
             print("⚠️ ChatGPT OCR 결과가 비어 있음")
             return ""
-    except Exception as e:
+        except Exception as e:
         print("❌ ChatGPT OCR 실패:", e)
         return ""
 
@@ -371,7 +371,7 @@ def ocr_bytes_to_text(image_bytes: bytes) -> str:
         else:
             print("⚠️ pytesseract OCR 결과가 비어 있음")
         return text
-    except Exception as e:
+        except Exception as e:
         print("OCR 폴백 실패:", e)
         return ""
 
@@ -531,19 +531,43 @@ def filter_issues_by_text_evidence(result, standard_json: str, ocr_text: str):
         if not expected or not actual:
             return False
         
-        # 1. D-소비톨 vs D-솔비톨 케이스
-        if "소비톨" in expected and "솔비톨" in actual:
-            return True
-        if "솔비톨" in expected and "소비톨" in actual:
-            return True
+        expected_clean = str(expected).strip()
+        actual_clean = str(actual).strip()
         
-        # 2. 원산지 정보 누락 케이스 (카사바전분 등)
-        # expected에 원산지가 여러 개 있고, actual에 일부만 있는 경우
-        if "원산지" in str(location).lower():
-            # 괄호 안의 원산지 정보 비교
+        # 1. D-소비톨 vs D-솔비톨 케이스 (정확히 매칭)
+        if "D-소비톨" in expected_clean and "D-솔비톨" in actual_clean:
+            return True
+        if "D-솔비톨" in expected_clean and "D-소비톨" in actual_clean:
+            return True
+        # 부분 매칭도 체크
+        if ("소비톨" in expected_clean and "솔비톨" in actual_clean) or \
+           ("솔비톨" in expected_clean and "소비톨" in actual_clean):
+            # "D-" 접두사가 있는 경우만
+            if "D-" in expected_clean or "D-" in actual_clean:
+                return True
+        
+        # 2. 카사바전분 원산지 정보 누락 케이스
+        if "카사바전분" in expected_clean and "카사바전분" in actual_clean:
             import re
-            expected_origins = re.findall(r'\(([^)]+)\)', expected)
-            actual_origins = re.findall(r'\(([^)]+)\)', actual)
+            # 괄호 안의 원산지 정보 비교
+            expected_origins = re.findall(r'\(([^)]+)\)', expected_clean)
+            actual_origins = re.findall(r'\(([^)]+)\)', actual_clean)
+            
+            # expected에 여러 원산지가 있고 actual에 일부만 있는 경우
+            if len(expected_origins) > 0 and len(actual_origins) > 0:
+                # "태국, 베트남산" vs "태국산" 같은 케이스
+                for exp_origin in expected_origins:
+                    for act_origin in actual_origins:
+                        # actual의 원산지가 expected에 포함되어 있으면 OCR 누락으로 간주
+                        if act_origin in exp_origin or exp_origin in act_origin:
+                            if len(exp_origin) > len(act_origin):  # expected가 더 길면 누락 가능
+                                return True
+        
+        # 3. 원산지 정보 누락 케이스 (일반화)
+        if "원산지" in str(location).lower() or "원산지" in expected_clean.lower():
+            import re
+            expected_origins = re.findall(r'\(([^)]+)\)', expected_clean)
+            actual_origins = re.findall(r'\(([^)]+)\)', actual_clean)
             
             # expected에 여러 원산지가 있고 actual에 일부만 있는 경우 (OCR 누락 가능)
             if len(expected_origins) > 1 and len(actual_origins) >= 1:
@@ -553,26 +577,33 @@ def filter_issues_by_text_evidence(result, standard_json: str, ocr_text: str):
                            for exp_origin in expected_origins):
                         return True
         
-        # 3. 카사바전분(태국, 베트남산) vs 카사바전분(태국산) 케이스
-        if "카사바전분" in expected and "카사바전분" in actual:
-            if "(태국, 베트남산)" in expected and "(태국산)" in actual:
-                return True
-            if "(태국산)" in expected and "(태국, 베트남산)" in actual:
-                return True
-        
         return False
 
     def is_equivalent(a, b):
         if not a or not b:
             return False
-        a_clean = a.replace(" ", "").replace("-", "")
-        b_clean = b.replace(" ", "").replace("-", "")
-        # 동일하거나 예외쌍이면 동일한 것으로 인정
-        return (
-            a_clean == b_clean or 
-            (a, b) in EXCEPTION_EQUIVALENT_PAIRS or
-            (b, a) in EXCEPTION_EQUIVALENT_PAIRS
-        )
+        a_clean = str(a).strip()
+        b_clean = str(b).strip()
+        
+        # 공백과 하이픈 제거 후 비교
+        a_normalized = a_clean.replace(" ", "").replace("-", "")
+        b_normalized = b_clean.replace(" ", "").replace("-", "")
+        
+        # 동일하면 동일한 것으로 인정
+        if a_normalized == b_normalized:
+            return True
+        
+        # 예외쌍 체크
+        if (a_clean, b_clean) in EXCEPTION_EQUIVALENT_PAIRS or \
+           (b_clean, a_clean) in EXCEPTION_EQUIVALENT_PAIRS:
+            return True
+        
+        # D-소비톨 vs D-솔비톨 케이스
+        if ("D-소비톨" in a_clean and "D-솔비톨" in b_clean) or \
+           ("D-솔비톨" in a_clean and "D-소비톨" in b_clean):
+            return True
+        
+        return False
 
     if not isinstance(result, dict):
         return result
@@ -643,7 +674,7 @@ def highlight_ocr_errors(ocr_text: str, issues: list) -> str:
     import re
     
     # OCR 텍스트를 원본 그대로 사용
-    highlighted_text = ocr_text
+    highlighted_text = str(ocr_text)
     
     if not issues:
         # 이스케이프 후 줄바꿈 처리
@@ -658,40 +689,68 @@ def highlight_ocr_errors(ocr_text: str, issues: list) -> str:
         actual = issue.get("actual", "")
         if actual:
             actual_clean = str(actual).strip()
-            if actual_clean and actual_clean not in seen:
+            if actual_clean and actual_clean and actual_clean not in seen:
                 highlight_texts.append(actual_clean)
                 seen.add(actual_clean)
+                print(f"🔴 하이라이트 대상: '{actual_clean}'")
+    
+    if not highlight_texts:
+        # 이스케이프 후 줄바꿈 처리
+        highlighted_text = html_mod.escape(highlighted_text)
+        highlighted_text = highlighted_text.replace("\n", "<br>")
+        return highlighted_text
     
     # 긴 문자열부터 정렬 (겹침 방지)
     highlight_texts.sort(key=len, reverse=True)
     
-    # 하이라이트 적용 (뒤에서부터 적용하여 인덱스 변화 방지)
+    # 하이라이트 적용
+    # 뒤에서부터 적용하여 인덱스 변화 방지
+    highlight_positions = []
     for highlight_text in highlight_texts:
-        # 정확히 일치하는 경우
-        if highlight_text in highlighted_text:
-            escaped_text = html_mod.escape(highlight_text)
-            highlighted = (
-                '<span style="background-color:#ffcccc;'
-                ' color:#cc0000; font-weight:bold; padding:2px 4px;'
-                ' border-radius:3px;">'
-                f'{escaped_text}</span>'
-            )
-            # 모든 발생을 하이라이트
-            highlighted_text = highlighted_text.replace(highlight_text, highlighted)
+        # 모든 발생 위치 찾기
+        start = 0
+        while True:
+            pos = highlighted_text.find(highlight_text, start)
+            if pos == -1:
+                break
+            # 겹침 체크
+            overlap = False
+            for existing_pos in highlight_positions:
+                if not (pos + len(highlight_text) <= existing_pos[0] or pos >= existing_pos[1]):
+                    overlap = True
+                    break
+            if not overlap:
+                highlight_positions.append((pos, pos + len(highlight_text), highlight_text))
+            start = pos + 1
     
-    # HTML 이스케이프 처리 (하이라이트 태그는 제외)
-    # 정규식으로 하이라이트 태그를 보호하면서 나머지만 이스케이프
-    def escape_except_spans(text):
-        parts = re.split(r'(<span[^>]*>.*?</span>)', text)
-        result = []
-        for part in parts:
-            if part.startswith('<span'):
-                result.append(part)  # 하이라이트 태그는 그대로
-            else:
-                result.append(html_mod.escape(part))  # 나머지는 이스케이프
-        return ''.join(result)
+    # 위치를 역순으로 정렬하여 뒤에서부터 적용
+    highlight_positions.sort(reverse=True)
     
-    highlighted_text = escape_except_spans(highlighted_text)
+    # 하이라이트 적용
+    for start, end, highlight_text in highlight_positions:
+        escaped_text = html_mod.escape(highlight_text)
+        highlighted = (
+            '<span style="background-color:#ffcccc;'
+            ' color:#cc0000; font-weight:bold; padding:2px 4px;'
+            ' border-radius:3px;">'
+            f'{escaped_text}</span>'
+        )
+        highlighted_text = highlighted_text[:start] + highlighted + highlighted_text[end:]
+        print(f"✅ 하이라이트 적용: '{highlight_text}' (위치: {start}-{end})")
+    
+    # 하이라이트 태그 외부의 텍스트 이스케이프
+    parts = re.split(r'(<span[^>]*>.*?</span>)', highlighted_text)
+    result_parts = []
+    for part in parts:
+        if part.startswith('<span'):
+            # 하이라이트 태그는 그대로 (이미 내부 텍스트는 이스케이프됨)
+            result_parts.append(part)
+                else:
+            # 하이라이트 태그 외부는 전체 이스케이프
+            result_parts.append(html_mod.escape(part))
+    highlighted_text = ''.join(result_parts)
+    
+    # 줄바꿈 처리
     highlighted_text = highlighted_text.replace("\n", "<br>")
     return highlighted_text
 
@@ -718,7 +777,7 @@ def process_file_to_part(file_storage):
             df = pd.read_excel(io.BytesIO(file_data))
             csv_text = df.to_csv(index=False)
             return {"text": f"--- [Excel 배합비 데이터] ---\n{csv_text}"}
-        except Exception as e:
+    except Exception as e:
             print(f"엑셀 변환 실패: {e}")
             return None
 
@@ -815,17 +874,17 @@ def verify_design():
 
     # 1. 디자인 파일 (PDF or 이미지)
     design_file = request.files.get('design_file')
-
+    
     # 2. 기준 데이터 (엑셀 파일 또는 JSON 문자열)
     standard_excel = request.files.get('standard_excel')
     standard_json = request.form.get('standard_data')
 
     if not design_file:
         return jsonify({"error": "디자인 파일이 필요합니다."}), 400
-
+    
     if not standard_excel and not standard_json:
         return jsonify({"error": "기준 데이터(엑셀 파일 또는 JSON)가 필요합니다."}), 400
-
+    
     # 기준 데이터 처리 (엑셀 → 간단 JSON)
     if standard_excel:
         try:
@@ -836,28 +895,28 @@ def verify_design():
             )
             if not df_dict:
                 return jsonify({"error": "엑셀 파일이 비어있습니다."}), 400
-
+            
             first_sheet_name = list(df_dict.keys())[0]
             first_sheet_df = df_dict[first_sheet_name]
-
+            
             if first_sheet_df.empty:
                 return jsonify({"error": "엑셀 파일의 첫 번째 시트가 비어있습니다."}), 400
-
-            first_column = first_sheet_df.columns[0]
-            if '원재료명' in first_sheet_df.columns:
+            
+                first_column = first_sheet_df.columns[0]
+                if '원재료명' in first_sheet_df.columns:
                 ingredients_list = first_sheet_df['원재료명'].dropna().astype(str).tolist()
-            else:
+                else:
                 ingredients_list = first_sheet_df[first_column].dropna().astype(str).tolist()
-
+                
             if not ingredients_list:
                 return jsonify({"error": "엑셀 파일의 첫 번째 시트에 데이터가 없습니다."}), 400
 
-            standard_data = {
-                'ingredients': {
-                    'structured_list': ingredients_list,
-                    'continuous_text': ', '.join(ingredients_list)
-                }
-            }
+                    standard_data = {
+                        'ingredients': {
+                            'structured_list': ingredients_list,
+                            'continuous_text': ', '.join(ingredients_list)
+                        }
+                    }
             standard_json = json.dumps(standard_data, ensure_ascii=False)
         except Exception as e:
             print(f"❌ 엑셀 파일 읽기 오류: {e}")
@@ -890,14 +949,21 @@ def verify_design():
         # 3번 결과를 비교해 공통 오류만 추출
         print("🔍 3번의 OCR 결과를 비교하여 공통 오류를 찾는 중...")
         common_result = find_common_errors(ocr_results, standard_json)
+        
+        print(f"📊 공통 오류 발견: {len(common_result.get('issues', []))}개")
 
-        # 헛소리 필터 적용 (expected ∈ Standard, actual ∈ OCR)
-        common_result = filter_issues_by_text_evidence(
+        # 헛소리 필터 적용 (expected ∈ Standard, actual ∈ OCR + OCR 오류 제외)
+        filtered_result = filter_issues_by_text_evidence(
             {"issues": common_result.get("issues", [])},
             standard_json,
             common_result.get("ocr_text", "")
         )
-        issues_filtered = common_result.get("issues", [])
+        issues_filtered = filtered_result.get("issues", [])
+        
+        print(f"📊 필터링 후 남은 오류: {len(issues_filtered)}개")
+        
+        # common_result에 필터링된 issues 반영
+        common_result["issues"] = issues_filtered
 
         # 하이라이트 HTML 생성
         highlighted_html = highlight_ocr_errors(
@@ -912,7 +978,7 @@ def verify_design():
             "design_ocr_text": common_result.get("design_ocr_text", common_result.get("ocr_text", "")),
             "design_ocr_highlighted_html": highlighted_html,
             "score": score,
-            "law_compliance": {
+    "law_compliance": {
                 "status": "compliant" if len(issues_filtered) == 0 else "violation",
                 "violations": []
             },
@@ -920,7 +986,7 @@ def verify_design():
         }
 
         return jsonify(final_result)
-
+        
     except Exception as e:
         print(f"❌ 검증 오류: {e}")
         traceback.print_exc()
