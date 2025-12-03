@@ -47,7 +47,7 @@ else:
 MODEL_NAME = "gpt-4.1-mini"   # 텍스트+이미지 모두 지원
 
 
-# --- 공통 OpenAI 호출 헬퍼 (Gemini 대체) ---
+# --- 공통 OpenAI 호출 헬퍼 ---
 
 def to_image_data_url(img_bytes: bytes, mime_type: str = "image/png") -> str:
     """이미지 바이너리를 data URL(base64)로 변환"""
@@ -57,7 +57,7 @@ def to_image_data_url(img_bytes: bytes, mime_type: str = "image/png") -> str:
 
 def call_openai_from_parts(parts, json_mode: bool = True) -> str:
     """
-    Gemini의 model.generate_content(parts)를 대체하는 OpenAI 호출.
+    OpenAI Responses API 호출.
     - parts: 문자열, PIL.Image.Image 섞여 있는 리스트
     - json_mode: True면 "JSON만 출력"이라고 시스템 지시를 앞에 붙임
     - 반환값: ChatGPT가 반환한 텍스트 전체 (string)
@@ -90,7 +90,7 @@ def call_openai_from_parts(parts, json_mode: bool = True) -> str:
                 "type": "input_image",
                 "image_url": {"url": data_url},
             })
-else:
+        else:
             # dict 등 기타 타입은 필요시 확장
             pass
 
@@ -164,43 +164,43 @@ PROMPT_CREATE_STANDARD = """
 
 [출력 양식 - JSON만 출력]
 {
-    "product_info": {
-        "product_name": "제품명",
+  "product_info": {
+    "product_name": "제품명",
     "food_type": "식품의 유형",
     "net_weight": "내용량",
     "expiration_date": "소비기한",
     "storage_method": "보관방법",
     "packaging_material": "포장재질",
-        "item_report_number": "품목보고번호",
+    "item_report_number": "품목보고번호",
     "front_calories": "전면부 총열량/문구"
-    },
-    "ingredients": {
+  },
+  "ingredients": {
     "structured_list": ["..."],
     "continuous_text": "원재료명, 원재료명2, ..."
-    },
-    "allergens": {
-        "contains": ["대두", "게"],
+  },
+  "allergens": {
+    "contains": ["대두", "게"],
     "manufacturing_facility": "제조시설 안내 문구"
-    },
-    "nutrition_info": {
-        "total_content": "1000 g",
-        "per_100g": {
+  },
+  "nutrition_info": {
+    "total_content": "1000 g",
+    "per_100g": {
       "calories": "130 Kcal"
     },
     "disclaimer": "영양정보 주의 문구 등"
-    },
-    "manufacturer": {
+  },
+  "manufacturer": {
     "name": "제조업체명",
     "address": "주소"
   },
   "precautions": ["주의사항1", "주의사항2"],
-    "law_compliance": {
-        "status": "compliant" | "needs_review",
-        "issues": ["법률 위반 사항 목록 (있는 경우)"]
-    },
-    "details": [
-        {"name": "원재료명", "ratio": "배합비율", "origin": "원산지", "sub_ingredients": "하위원료"}
-    ]
+  "law_compliance": {
+    "status": "compliant" | "needs_review",
+    "issues": ["법률 위반 사항 목록 (있는 경우)"]
+  },
+  "details": [
+    {"name": "원재료명", "ratio": "배합비율", "origin": "원산지", "sub_ingredients": "하위원료"}
+  ]
 }
 """
 
@@ -229,20 +229,20 @@ PROMPT_VERIFY_DESIGN = """
 {
   "design_ocr_text": "디자인 전체 텍스트(raw_text 또는 OCR 결과) 그대로",
   "score": 100,
-    "law_compliance": {
-        "status": "compliant" | "violation",
+  "law_compliance": {
+    "status": "compliant" | "violation",
     "violations": ["식품등의 표시기준 제X조 위반..."]
-    },
-    "issues": [
-        {
+  },
+  "issues": [
+    {
       "type": "Critical" | "Minor" | "Law_Violation",
       "location": "항목명 (예: 영양정보)",
       "issue": "오류 상세 설명",
       "expected": "기준서 데이터에서 실제 발췌한 텍스트",
       "actual": "디자인 OCR에서 실제 발췌한 틀린 텍스트",
       "suggestion": "수정 제안"
-        }
-    ]
+    }
+  ]
 }
 """
 
@@ -343,7 +343,7 @@ def ocr_image_bytes_with_chatgpt(image_bytes: bytes) -> str:
         else:
             print("⚠️ ChatGPT OCR 결과가 비어 있음")
             return ""
-        except Exception as e:
+    except Exception as e:
         print("❌ ChatGPT OCR 실패:", e)
         return ""
 
@@ -371,7 +371,7 @@ def ocr_bytes_to_text(image_bytes: bytes) -> str:
         else:
             print("⚠️ pytesseract OCR 결과가 비어 있음")
         return text
-        except Exception as e:
+    except Exception as e:
         print("OCR 폴백 실패:", e)
         return ""
 
@@ -395,25 +395,25 @@ def ocr_multiple_times(image_bytes: bytes, num_runs: int = 3) -> list:
 def verify_with_ocr(ocr_text: str, standard_json: str) -> dict:
     """
     OCR 텍스트와 Standard를 비교하여 검증 결과 반환
+    (한 번의 OCR 결과에 대해 독립적으로 검증)
     """
     if not ocr_text:
         return {"issues": [], "design_ocr_text": ""}
-    
+
     try:
-        # AI 검증 수행
         enhanced_prompt = PROMPT_VERIFY_DESIGN
         if ALL_LAW_TEXT:
             enhanced_prompt += f"\n\n--- [참고 법령] ---\n{ALL_LAW_TEXT}\n--- [법령 끝] ---\n"
-        
+
         parts = [
             enhanced_prompt,
             f"\n--- [기준 데이터(Standard)] ---\n{standard_json}",
-            f"\n--- [디자인 OCR 텍스트] ---\n{ocr_text}"
+            f"\n--- [디자인 OCR 텍스트] ---\n{ocr_text}\n--- [디자인 OCR 텍스트 끝] ---\n",
         ]
-        
+
         result_text = call_openai_from_parts(parts, json_mode=True).strip()
-        
-        # JSON 파싱
+
+        # JSON 파싱 전 코드블럭 제거
         if result_text.startswith("```json"):
             result_text = result_text[7:]
             if result_text.endswith("```"):
@@ -425,10 +425,12 @@ def verify_with_ocr(ocr_text: str, standard_json: str) -> dict:
             if lines and lines[-1].strip().startswith("```"):
                 lines = lines[:-1]
             result_text = "\n".join(lines).strip()
-        
+
         result = json.loads(result_text)
         result = clean_ai_response(result)
-        
+
+        # design_ocr_text가 없으면 우리가 사용한 OCR 텍스트를 그대로 넣는다.
+        result.setdefault("design_ocr_text", ocr_text)
         return result
     except Exception as e:
         print(f"❌ 검증 오류: {e}")
@@ -438,168 +440,128 @@ def verify_with_ocr(ocr_text: str, standard_json: str) -> dict:
 
 def find_common_errors(ocr_results: list, standard_json: str) -> dict:
     """
-    3번의 OCR 결과를 비교하여 2번 이상 일치하는 오류만 반환
+    3번의 OCR 결과를 비교하여 2번 이상 일치하는 오류만 반환.
+
+    - OCR 결과마다 verify_with_ocr 로 독립 검증.
+    - 같은 (location, expected)를 가진 issue 를 ‘같은 오류’로 인식.
+    - 같은 오류가 3번 중 2번 이상 등장하면 최종 issues 에 포함.
+    - 1번만 등장한 오류는 모두 제외.
     """
     if not ocr_results:
         return {"ocr_text": "", "issues": [], "design_ocr_text": ""}
-    
-    # 각 OCR 결과에 대해 독립적으로 검증 수행
-    all_verification_results = []
+
+    # 각 OCR 결과에 대해 독립 검증 수행
+    all_verifications = []
     for i, ocr_text in enumerate(ocr_results):
-        if not ocr_text:
-            continue
         print(f"🔍 OCR 결과 {i+1}/{len(ocr_results)} 검증 중...")
         result = verify_with_ocr(ocr_text, standard_json)
-        issues = result.get("issues", [])
+        issues = result.get("issues", []) or []
         print(f"   → {len(issues)}개 오류 발견")
-        all_verification_results.append({
+        all_verifications.append({
             "ocr_text": ocr_text,
+            "design_ocr_text": result.get("design_ocr_text", ocr_text),
             "issues": issues,
-            "design_ocr_text": result.get("design_ocr_text", ocr_text)
         })
-    
-    if not all_verification_results:
-        return {"ocr_text": ocr_results[0] if ocr_results else "", "issues": [], "design_ocr_text": ocr_results[0] if ocr_results else ""}
-    
-    # 2번 이상 일치하는 오류 찾기
-    # 유연한 비교를 위해 location + expected + issue 설명을 키로 사용
-    def normalize_text(text):
-        """텍스트 정규화 (공백 제거, 소문자 변환 등)"""
-        if not text:
-            return ""
-        # 공백 정리
-        text = re.sub(r'\s+', ' ', str(text)).strip()
-        return text
-    
-    def issue_similarity(issue1, issue2):
-        """두 issue가 같은 오류인지 판단 (유사도 기반)"""
-        loc1 = normalize_text(issue1.get("location", ""))
-        loc2 = normalize_text(issue2.get("location", ""))
-        exp1 = normalize_text(issue1.get("expected", ""))
-        exp2 = normalize_text(issue2.get("expected", ""))
-        desc1 = normalize_text(issue1.get("issue", ""))
-        desc2 = normalize_text(issue2.get("issue", ""))
-        
-        # 1. location이 같거나 포함 관계여야 함 (가장 중요)
-        if loc1 and loc2:
-            if loc1 != loc2:
-                # location이 완전히 다르면 다른 오류
-                if loc1 not in loc2 and loc2 not in loc1:
-                    # 하지만 "원재료명" 같은 공통 키워드가 있으면 같은 카테고리로 봄
-                    common_words = set(loc1.split()) & set(loc2.split())
-                    if not common_words:
-                        return False
-        
-        # 2. expected가 같거나 비슷해야 함 (핵심 비교 기준)
-        if exp1 and exp2:
-            if exp1 == exp2:
-                return True  # expected가 완전히 같으면 같은 오류
-            # expected가 다르지만 유사한 경우
-            # "없음" 같은 특수 케이스 처리
-            if "없음" in exp1 and "없음" in exp2:
-                return True
-            # expected의 핵심 부분이 같으면 같은 오류
-            # 예: "야채찌이 어묵" vs "야채찌이 어묵" (공백 차이)
-            exp1_clean = re.sub(r'\s+', '', exp1)
-            exp2_clean = re.sub(r'\s+', '', exp2)
-            if exp1_clean == exp2_clean:
-                return True
-            # expected의 일부가 포함되어 있으면 같은 오류로 봄
-            if len(exp1) > 5 and len(exp2) > 5:
-                if exp1[:10] == exp2[:10] or exp1[-10:] == exp2[-10:]:
-                    return True
-        
-        # 3. issue 설명의 핵심 키워드가 비슷해야 함
-        if desc1 and desc2:
-            # 핵심 키워드 추출
-            important_keywords = ["누락", "오기", "추가", "변경", "위반", "불일치", "공백", "없음"]
-            keywords1 = [kw for kw in important_keywords if kw in desc1]
-            keywords2 = [kw for kw in important_keywords if kw in desc2]
-            if keywords1 and keywords2:
-                if set(keywords1) & set(keywords2):  # 공통 키워드가 있으면
-                    # location과 expected가 비슷하면 같은 오류
-                    if loc1 and loc2 and (loc1 in loc2 or loc2 in loc1):
-                        if exp1 and exp2:
-                            return True
-        
-        # 4. location과 expected가 모두 비슷하면 같은 오류
-        if loc1 and loc2 and (loc1 in loc2 or loc2 in loc1):
-            if exp1 and exp2:
-                # expected의 핵심 단어가 겹치면 같은 오류
-                exp1_words = set(re.findall(r'\w+', exp1))
-                exp2_words = set(re.findall(r'\w+', exp2))
-                if exp1_words & exp2_words:  # 공통 단어가 있으면
-                    return True
-        
-        return False
-    
-    # 모든 issue를 수집하고 그룹화
-    all_issues = []
-    for verification in all_verification_results:
-        for issue in verification.get("issues", []):
-            all_issues.append(issue)
-    
-    # 유사한 issue들을 그룹화
-    # 먼저 location + expected를 키로 사용하여 그룹화 (더 정확)
-    issue_groups_by_key = {}
-    for issue in all_issues:
-        loc = normalize_text(issue.get("location", ""))
-        exp = normalize_text(issue.get("expected", ""))
-        
-        # "없음"이 포함된 경우 location만 키로 사용
-        if "없음" in exp or not exp:
-            key = (loc, None)  # location만 키로 사용
-        else:
-            key = (loc, exp)  # location과 expected를 키로 사용
-        
-        if key not in issue_groups_by_key:
-            issue_groups_by_key[key] = []
-        issue_groups_by_key[key].append(issue)
-    
-    # 키가 없는 경우 (location이나 expected가 없는 경우) 유사도 기반으로 그룹화
-    issue_groups = []
-    for key, group in issue_groups_by_key.items():
-        if key[0]:  # location이 있으면
-            issue_groups.append(group)
-        else:
-            # location이 없는 경우 기존 그룹과 비교
-            found_group = False
-            for existing_group in issue_groups:
-                if issue_similarity(existing_group[0], group[0]):
-                    existing_group.extend(group)
-                    found_group = True
-                    break
-            if not found_group:
-                issue_groups.append(group)
-    
-    # 2번 이상 일치하는 오류만 필터링
+
+    # location+expected 를 key 로 해서 등장 횟수 카운트
+    issue_counts = {}
+    issue_repr = {}  # 대표 issue 저장
+
+    def norm(s):
+        return (s or "").strip()
+
+    for ver in all_verifications:
+        for issue in ver["issues"]:
+            loc = norm(issue.get("location"))
+            exp = norm(issue.get("expected"))
+
+            # location과 expected 둘 다 없으면 키로 사용하지 않음
+            if not loc and not exp:
+                continue
+
+            key = (loc, exp)
+            issue_counts[key] = issue_counts.get(key, 0) + 1
+            # 가장 먼저 본 issue를 대표로 사용
+            if key not in issue_repr:
+                issue_repr[key] = issue
+
+    # 2번 이상 등장한 오류만 남김
     common_issues = []
-    for group in issue_groups:
-        if len(group) >= 2:
-            # 가장 자세한 issue를 대표로 선택 (가장 긴 issue 설명)
-            representative = max(group, key=lambda x: len(str(x.get("issue", ""))))
-            common_issues.append(representative)
-            location = representative.get('location', '')
-            issue_desc = representative.get('issue', '')[:50]
-            expected = representative.get('expected', '')[:30]
-            print(f"✅ 공통 오류 발견 ({len(group)}/{len(ocr_results)}): [{location}] {issue_desc}... (expected: {expected}...)")
+    for key, count in issue_counts.items():
+        if count >= 2:
+            issue = issue_repr[key]
+            common_issues.append(issue)
+            print(f"✅ 공통 오류 ({count}/{len(ocr_results)}회): "
+                  f"[{key[0]}] expected='{key[1]}'")
         else:
-            # 1번만 발견된 오류는 제외
-            location = group[0].get('location', '')
-            issue_desc = group[0].get('issue', '')[:50]
-            print(f"❌ 단일 발견 오류 제외 (1/{len(ocr_results)}): [{location}] {issue_desc}...")
-    
-    print(f"📊 총 {len(all_issues)}개 오류 중 {len(common_issues)}개가 2번 이상 일치하여 최종 선택됨")
-    
-    # 첫 번째 OCR 결과를 메인으로 사용
-    main_ocr = all_verification_results[0]["ocr_text"]
-    main_design_ocr = all_verification_results[0]["design_ocr_text"]
-    
+            print(f"❌ 단일 발견 오류 제외 (1/{len(ocr_results)}회): "
+                  f"[{key[0]}] expected='{key[1]}'")
+
+    print(f"📊 총 {sum(len(v['issues']) for v in all_verifications)}개 오류 중 "
+          f"{len(common_issues)}개가 2회 이상 일치하여 최종 선택됨")
+
+    # 첫 번째 OCR 결과를 대표 텍스트로 사용
+    main_ocr = all_verifications[0]["ocr_text"]
+    main_design_ocr = all_verifications[0]["design_ocr_text"]
+
     return {
         "ocr_text": main_ocr,
+        "design_ocr_text": main_design_ocr,
         "issues": common_issues,
-        "design_ocr_text": main_design_ocr
     }
+
+
+def filter_issues_by_text_evidence(result, standard_json: str, ocr_text: str):
+    """
+    LLM 헛소리 방지 필터:
+
+    1) expected(정답)는 반드시 Standard JSON 텍스트 안에 실제 존재해야 함
+    2) actual(실제)는 반드시 OCR 텍스트 안에 실제 존재해야 함
+
+    둘 중 하나라도 없으면 그 issue 는 제거.
+    """
+    if not isinstance(result, dict):
+        return result
+
+    try:
+        std_obj = json.loads(standard_json) if standard_json else {}
+        std_text = json.dumps(std_obj, ensure_ascii=False)
+    except Exception:
+        std_text = standard_json or ""
+
+    ocr_text = ocr_text or ""
+
+    issues = result.get("issues", [])
+    if not isinstance(issues, list):
+        return result
+
+    filtered = []
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+
+        expected = str(issue.get("expected", "") or "")
+        actual = str(issue.get("actual", "") or "")
+
+        if expected and expected not in std_text:
+            print("🚫 expected 가 Standard 안에 없음 → 이슈 제거:", expected)
+            continue
+        if actual and actual not in ocr_text:
+            print("🚫 actual 이 OCR 텍스트 안에 없음 → 이슈 제거:", actual)
+            continue
+
+        filtered.append(issue)
+
+    result["issues"] = filtered
+    return result
+
+
+def mark_possible_ocr_error_issues(result, hard_drop_distance: int = 1, soft_drop_distance: int = 2):
+    """
+    expected / actual 간 차이가 너무 작으면 OCR 노이즈로 처리.
+    (여기서는 일단 그대로 패스. 필요하면 추가 규칙 넣으면 됨.)
+    """
+    return result
 
 
 def highlight_ocr_errors(ocr_text: str, issues: list) -> str:
@@ -608,25 +570,26 @@ def highlight_ocr_errors(ocr_text: str, issues: list) -> str:
     """
     if not ocr_text or not issues:
         return ocr_text
-    
-    # HTML 이스케이프 처리
-    import html
-    highlighted_text = html.escape(ocr_text)
-    
-    # 각 issue의 actual 텍스트를 빨간색으로 하이라이트
+
+    import html as html_mod
+    highlighted_text = html_mod.escape(ocr_text)
+
     for issue in issues:
         actual = issue.get("actual", "")
-        if actual and actual:
-            # HTML 이스케이프된 actual 찾기
-            escaped_actual = html.escape(actual)
-            if escaped_actual in highlighted_text:
-                # 빨간색 하이라이트 적용
-                highlighted = f'<span style="background-color:#ffcccc; color:#cc0000; font-weight:bold; padding:2px 4px; border-radius:3px;">{escaped_actual}</span>'
-                highlighted_text = highlighted_text.replace(escaped_actual, highlighted, 1)  # 첫 번째만 교체
-    
-    # 줄바꿈을 <br>로 변환
-    highlighted_text = highlighted_text.replace('\n', '<br>')
-    
+        if not actual:
+            continue
+        escaped_actual = html_mod.escape(actual)
+        if escaped_actual in highlighted_text:
+            highlighted = (
+                "<span style=\"background-color:#ffcccc;"
+                " color:#cc0000; font-weight:bold; padding:2px 4px;"
+                " border-radius:3px;\">"
+                f"{escaped_actual}</span>"
+            )
+            # 한 번만 교체
+            highlighted_text = highlighted_text.replace(escaped_actual, highlighted, 1)
+
+    highlighted_text = highlighted_text.replace("\n", "<br>")
     return highlighted_text
 
 
@@ -644,7 +607,10 @@ def process_file_to_part(file_storage):
     file_storage.seek(0)
 
     # 엑셀 -> CSV 텍스트
-    if mime_type in ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel']:
+    if mime_type in [
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/vnd.ms-excel',
+    ]:
         try:
             df = pd.read_excel(io.BytesIO(file_data))
             csv_text = df.to_csv(index=False)
@@ -698,7 +664,7 @@ def extract_ingredient_info_from_image(image_file):
         print("--------------------------------------------------")
 
         # ChatGPT 응답이 완전 비었으면 바로 OCR 폴백
-        if (not result_text):
+        if not result_text:
             ocr_text = ocr_bytes_to_text(image_data)
             if ocr_text:
                 return {"ocr_fallback_text": ocr_text}
@@ -712,7 +678,7 @@ def extract_ingredient_info_from_image(image_file):
             if result_text.startswith("json"):
                 result_text = result_text[4:].strip()
         result_text = result_text.strip()
-        
+
         # JSON 파싱 시도
         try:
             return json.loads(result_text)
@@ -731,226 +697,127 @@ def extract_ingredient_info_from_image(image_file):
         return None
 
 
-# --- 헛소리 / OCR 노이즈 필터 ---
-
-def filter_issues_by_text_evidence(result, standard_json: str, ocr_text: str):
-    """
-    LLM 헛소리 방지 필터:
-
-    1) expected(정답)는 반드시 Standard JSON 텍스트 안에 실제 존재해야 함
-    2) actual(실제)는 반드시 OCR 텍스트 안에 실제 존재해야 함
-
-    둘 중 하나라도 없으면 그 issue 는 제거.
-    또, expected 가 OCR 에도 그대로 있고 actual 과 매우 비슷하면
-    LLM이 쓸데없이 짝을 잘못 맞춘 것으로 보고 제거.
-    """
-    if not isinstance(result, dict):
-        return result
-
-    try:
-        std_obj = json.loads(standard_json) if standard_json else {}
-        std_text = json.dumps(std_obj, ensure_ascii=False)
-    except Exception:
-        std_text = standard_json or ""
-
-    ocr_text = ocr_text or ""
-
-    issues = result.get("issues", [])
-    if not isinstance(issues, list):
-        return result
-
-    def approx_distance(a: str, b: str) -> int:
-        if not a or not b:
-            return 999
-        s = difflib.SequenceMatcher(None, a, b)
-        return int(round((1.0 - s.ratio()) * max(len(a), len(b))))
-
-    filtered = []
-    for issue in issues:
-        if not isinstance(issue, dict):
-            continue
-
-        expected = str(issue.get("expected", "") or "")
-        actual   = str(issue.get("actual", "") or "")
-        desc     = str(issue.get("issue", "") or "")
-
-        if not expected and not actual:
-            filtered.append(issue)
-            continue
-
-        expected_in_std = bool(expected and expected in std_text)
-        expected_in_ocr = bool(expected and expected in ocr_text)
-        actual_in_std   = bool(actual   and actual   in std_text)
-        actual_in_ocr   = bool(actual   and actual   in ocr_text)
-
-        # 1) 기본: expected ∈ Standard, actual ∈ OCR
-        if expected and not expected_in_std:
-            print("🚫 expected 가 Standard 안에 없음 → 이슈 제거:", expected)
-            continue
-        if actual and not actual_in_ocr:
-            print("🚫 actual 이 OCR 텍스트 안에 없음 → 이슈 제거:", actual)
-            continue
-
-        # 2) expected 도 OCR 에 그대로 있고 actual 이 비슷한 문자열 → 짝짓기 헛소리 가능성
-        if expected and actual:
-            dist = approx_distance(expected, actual)
-            min_len = min(len(expected), len(actual))
-            if min_len >= 3 and dist <= 2 and expected_in_ocr and not actual_in_std:
-                print("🚫 expected 는 OCR 에 존재 & actual 은 비슷 → LLM 짝짓기 오류, 이슈 제거:", {
-                    "expected": expected,
-                    "actual": actual,
-                    "distance": dist,
-                })
-                continue
-
-        # 3) 둘 다 Standard/OCR 양쪽에 다 있으면 너무 애매 → 제거
-        if (expected and expected_in_std and expected_in_ocr) and \
-           (actual   and actual_in_std   and actual_in_ocr):
-            print("🚫 expected/actual 이 Standard/OCR 양쪽에 모두 존재 → 애매, 이슈 제거:", {
-                "expected": expected,
-                "actual": actual,
-            })
-            continue
-
-        filtered.append(issue)
-
-    result["issues"] = filtered
-    return result
-
-
-def mark_possible_ocr_error_issues(result, hard_drop_distance: int = 1, soft_drop_distance: int = 2):
-    """
-    expected / actual 간 차이가 너무 작으면 OCR 노이즈로 처리.
-    """
-    # TODO: 구현 필요
-    return result
-
-
-# --- API 엔드포인트 ---
+# --- API 엔드포인트: 디자인 검증 ---
 @app.route('/api/verify-design', methods=['POST'])
 def verify_design():
     """
     디자인 검증 API
     - OCR을 3번 실행
-    - 각 결과에 대해 검증 수행
-    - 2번 이상 일치하는 오류만 반환
-    - OCR 텍스트에 오류 하이라이트 적용
+    - 각 결과에 대해 독립적으로 검증 수행
+    - 같은 (location, expected)를 가진 issue는 같은 오류로 인식
+    - 3번 중 2번 이상 일치하는 오류만 최종 결과에 포함
+    - 단일 발견 오류는 제외
     """
     print("🕵️‍♂️ 디자인 검증 시작...")
 
     # 1. 디자인 파일 (PDF or 이미지)
     design_file = request.files.get('design_file')
-    
+
     # 2. 기준 데이터 (엑셀 파일 또는 JSON 문자열)
     standard_excel = request.files.get('standard_excel')
     standard_json = request.form.get('standard_data')
 
     if not design_file:
         return jsonify({"error": "디자인 파일이 필요합니다."}), 400
-    
+
     if not standard_excel and not standard_json:
         return jsonify({"error": "기준 데이터(엑셀 파일 또는 JSON)가 필요합니다."}), 400
-    
-    # 기준 데이터 처리
+
+    # 기준 데이터 처리 (엑셀 → 간단 JSON)
     if standard_excel:
-        # 엑셀 파일에서 읽기
         try:
-            df_dict = pd.read_excel(io.BytesIO(standard_excel.read()), sheet_name=None, engine='openpyxl')
-            
+            df_dict = pd.read_excel(
+                io.BytesIO(standard_excel.read()),
+                sheet_name=None,
+                engine='openpyxl'
+            )
             if not df_dict:
                 return jsonify({"error": "엑셀 파일이 비어있습니다."}), 400
-            
-            # 첫 번째 시트 가져오기
+
             first_sheet_name = list(df_dict.keys())[0]
             first_sheet_df = df_dict[first_sheet_name]
-            
-            # 간단한 JSON 변환
-            standard_data = {}
-            if not first_sheet_df.empty:
-                first_column = first_sheet_df.columns[0]
-                if '원재료명' in first_sheet_df.columns:
-                    ingredients_list = first_sheet_df['원재료명'].dropna().tolist()
-                elif first_column:
-                    ingredients_list = first_sheet_df[first_column].dropna().astype(str).tolist()
-                else:
-                    ingredients_list = first_sheet_df.iloc[:, 0].dropna().astype(str).tolist()
-                
-                if ingredients_list:
-                    standard_data = {
-                        'ingredients': {
-                            'structured_list': ingredients_list,
-                            'continuous_text': ', '.join(ingredients_list)
-                        }
-                    }
-                else:
-                    return jsonify({"error": "엑셀 파일의 첫 번째 시트에 데이터가 없습니다."}), 400
-            else:
+
+            if first_sheet_df.empty:
                 return jsonify({"error": "엑셀 파일의 첫 번째 시트가 비어있습니다."}), 400
-            
+
+            first_column = first_sheet_df.columns[0]
+            if '원재료명' in first_sheet_df.columns:
+                ingredients_list = first_sheet_df['원재료명'].dropna().astype(str).tolist()
+            else:
+                ingredients_list = first_sheet_df[first_column].dropna().astype(str).tolist()
+
+            if not ingredients_list:
+                return jsonify({"error": "엑셀 파일의 첫 번째 시트에 데이터가 없습니다."}), 400
+
+            standard_data = {
+                'ingredients': {
+                    'structured_list': ingredients_list,
+                    'continuous_text': ', '.join(ingredients_list)
+                }
+            }
             standard_json = json.dumps(standard_data, ensure_ascii=False)
         except Exception as e:
             print(f"❌ 엑셀 파일 읽기 오류: {e}")
             traceback.print_exc()
             return jsonify({"error": f"엑셀 파일 읽기 실패: {str(e)}"}), 400
 
-    # 디자인 파일을 이미지로 변환
+    # 디자인 파일 → 이미지 bytes
     try:
         design_data = design_file.read()
         design_file.seek(0)
-        
-        # PDF인 경우 첫 페이지를 이미지로 변환
+
         if design_file.mimetype == 'application/pdf' and PDF2IMAGE_AVAILABLE:
             images = convert_from_bytes(design_data, dpi=200)
-            if images:
-                # PIL.Image를 bytes로 변환
-                img_bytes_io = io.BytesIO()
-                images[0].save(img_bytes_io, format='PNG')
-                design_image_bytes = img_bytes_io.getvalue()
-            else:
+            if not images:
                 return jsonify({"error": "PDF에서 이미지를 추출할 수 없습니다."}), 400
+            img_io = io.BytesIO()
+            images[0].save(img_io, format='PNG')
+            design_image_bytes = img_io.getvalue()
         elif design_file.mimetype.startswith('image/'):
             design_image_bytes = design_data
         else:
             return jsonify({"error": "지원하지 않는 파일 형식입니다."}), 400
-        
+
         # OCR을 3번 실행
         print("🔄 OCR을 3번 실행합니다...")
         ocr_results = ocr_multiple_times(design_image_bytes, num_runs=3)
-        
         if not ocr_results:
             return jsonify({"error": "OCR 실행에 실패했습니다."}), 500
-        
-        # 3번의 결과를 비교하여 2번 이상 일치하는 오류만 찾기
+
+        # 3번 결과를 비교해 공통 오류만 추출
         print("🔍 3번의 OCR 결과를 비교하여 공통 오류를 찾는 중...")
         common_result = find_common_errors(ocr_results, standard_json)
-        
-        # 필터링 적용
+
+        # 헛소리 필터 적용 (expected ∈ Standard, actual ∈ OCR)
         common_result = filter_issues_by_text_evidence(
-            common_result, 
-            standard_json, 
+            {"issues": common_result.get("issues", [])},
+            standard_json,
             common_result.get("ocr_text", "")
         )
-        
-        # OCR 텍스트에 오류 하이라이트 적용
+        issues_filtered = common_result.get("issues", [])
+
+        # 하이라이트 HTML 생성
         highlighted_html = highlight_ocr_errors(
             common_result.get("design_ocr_text", common_result.get("ocr_text", "")),
-            common_result.get("issues", [])
+            issues_filtered
         )
-        
-        # 최종 결과 구성
+
+        # 점수는 매우 단순하게: 오류당 -5점 (최소 0)
+        score = max(0, 100 - 5 * len(issues_filtered))
+
         final_result = {
             "design_ocr_text": common_result.get("design_ocr_text", common_result.get("ocr_text", "")),
             "design_ocr_highlighted_html": highlighted_html,
-            "score": 100 - (len(common_result.get("issues", [])) * 5),  # 간단한 점수 계산
-    "law_compliance": {
-                "status": "compliant" if len(common_result.get("issues", [])) == 0 else "violation",
+            "score": score,
+            "law_compliance": {
+                "status": "compliant" if len(issues_filtered) == 0 else "violation",
                 "violations": []
             },
-            "issues": common_result.get("issues", [])
+            "issues": issues_filtered
         }
-        
+
         return jsonify(final_result)
-        
+
     except Exception as e:
         print(f"❌ 검증 오류: {e}")
         traceback.print_exc()
@@ -959,17 +826,13 @@ def verify_design():
 
 if __name__ == '__main__':
     print("🚀 삼진어묵 식품표시사항 완성 플랫폼 V3.0 가동")
-    print("   - 원부재료 표시사항 스마트 추출")
-    print("   - 법률 검토 기능 통합")
-    print("   - QA 자료 업로드 지원")
+    print("   - OCR 3회 + 다수결 오류 검증")
     from waitress import serve
 
-    # [수정] channel_timeout을 늘려주세요 (기본값은 짦음)
-    # connection_limit도 넉넉히 줍니다.
     serve(
-        app, 
-        host='0.0.0.0', 
+        app,
+        host='0.0.0.0',
         port=8080,
-        threads=4,              # 동시 처리 개수
-        channel_timeout=600     # 600초(10분) 동안은 응답 없어도 안 끊고 기다림
+        threads=4,
+        channel_timeout=600
     )
