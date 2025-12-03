@@ -134,5 +134,68 @@ def load_law_texts() -> str:
 
 ALL_LAW_TEXT = load_law_texts()
 
+# ✅ 하이라이트 생성 함수
+def generate_highlighted_html(ocr_text: str, label_text: str) -> str:
+    ocr_words = ocr_text.split()
+    label_words = label_text.split()
+
+    matcher = difflib.SequenceMatcher(None, ocr_words, label_words)
+    result_html = ""
+
+    for opcode, i1, i2, j1, j2 in matcher.get_opcodes():
+        if opcode == 'equal':
+            result_html += " ".join(ocr_words[i1:i2]) + " "
+        elif opcode in ['replace', 'delete']:
+            result_html += "<span style='background:#fee;color:#b00;font-weight:bold;'>"
+            result_html += " ".join(ocr_words[i1:i2])
+            result_html += "</span> "
+        elif opcode == 'insert':
+            continue
+    return result_html.strip()
+
+# ✅ 분석 엔드포인트 예시
+@app.route("/api/verify-design", methods=["POST"])
+def verify_design():
+    try:
+        file = request.files.get("file")
+        if not file:
+            return jsonify({"error": "파일 없음"}), 400
+
+        file_bytes = file.read()
+        img = PIL.Image.open(io.BytesIO(file_bytes))
+
+        # 1️⃣ OCR 수행 (간단히)
+        if TESSERACT_AVAILABLE:
+            ocr_text = pytesseract.image_to_string(img, lang="kor+eng").strip()
+        else:
+            ocr_text = "OCR 결과 없음 (Tesseract 미설치)"
+
+        # 2️⃣ OpenAI 응답 (간단 예시)
+        prompt = f"다음 식품 라벨 내용을 확인하고 올바르게 수정하거나 규정 위반 여부를 알려줘:\n\n{ocr_text}\n\n{ALL_LAW_TEXT}"
+        gpt_response = call_openai_from_parts([prompt])
+
+        try:
+            gpt_json = json.loads(gpt_response)
+            label_text = gpt_json.get("label_text", "")
+        except:
+            label_text = gpt_response  # 실패 시 전체 응답 사용
+
+        # 3️⃣ 빨간펜 하이라이트 생성
+        highlighted_html = generate_highlighted_html(ocr_text, label_text)
+
+        return jsonify({
+            "design_ocr_text": ocr_text,
+            "design_ocr_highlighted_html": highlighted_html,
+            "label_text": label_text
+        })
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8080)
+
 # --- 프롬프트 (지시사항) ---
 PR
