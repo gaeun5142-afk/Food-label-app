@@ -135,23 +135,24 @@ def load_law_texts() -> str:
 ALL_LAW_TEXT = load_law_texts()
 
 # ✅ 하이라이트 생성 함수
-def generate_highlighted_html(ocr_text: str, label_text: str) -> str:
-    ocr_words = ocr_text.split()
-    label_words = label_text.split()
+def highlight_matches(ocr_text: str, matches: list) -> str:
+    """
+    ocr_text 안에서 matches 리스트에 있는 텍스트들을
+    빨간 하이라이트 span으로 감싸서 반환
+    """
+    # HTML 특수 문자 이스케이프 (안 하면 < > 등이 깨짐)
+    escaped_text = html.escape(ocr_text)
 
-    matcher = difflib.SequenceMatcher(None, ocr_words, label_words)
-    result_html = ""
-
-    for opcode, i1, i2, j1, j2 in matcher.get_opcodes():
-        if opcode == 'equal':
-            result_html += " ".join(ocr_words[i1:i2]) + " "
-        elif opcode in ['replace', 'delete']:
-            result_html += "<span style='background:#fee;color:#b00;font-weight:bold;'>"
-            result_html += " ".join(ocr_words[i1:i2])
-            result_html += "</span> "
-        elif opcode == 'insert':
+    for word in matches:
+        if not word:
             continue
-    return result_html.strip()
+        word_escaped = html.escape(word)
+        pattern = re.escape(word_escaped)
+        repl = f'<span class="highlight-violation">{word_escaped}</span>'
+        escaped_text = re.sub(pattern, repl, escaped_text, flags=re.IGNORECASE)
+
+    return escaped_text
+
 
 # ✅ 분석 엔드포인트 예시
 @app.route("/api/verify-design", methods=["POST"])
