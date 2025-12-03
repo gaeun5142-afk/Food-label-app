@@ -189,7 +189,7 @@ def verify_design():
         print(label_text)  
 
         # 3️⃣ 빨간펜 하이라이트 생성
-        highlighted_html = generate_highlighted_html(ocr_text, label_text)
+        highlighted_html = highlight_matches(ocr_text, [label_text])
 
         return jsonify({
             "design_ocr_text": ocr_text,
