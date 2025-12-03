@@ -522,6 +522,45 @@ def filter_issues_by_text_evidence(result, standard_json: str, ocr_text: str):
         ("소브산칼륨", "소르빈산칼륨"),
         ("소브산칼륨(보존료)", "소르빈산칼륨(보존료)"),
     ]
+    
+    # --- OCR 오류로 인한 잘못된 검출 예외 (원산지 정보 누락 등) ---
+    def is_ocr_error_case(expected, actual, location):
+        """
+        OCR 오류로 인한 잘못된 검출인지 판단
+        """
+        if not expected or not actual:
+            return False
+        
+        # 1. D-소비톨 vs D-솔비톨 케이스
+        if "소비톨" in expected and "솔비톨" in actual:
+            return True
+        if "솔비톨" in expected and "소비톨" in actual:
+            return True
+        
+        # 2. 원산지 정보 누락 케이스 (카사바전분 등)
+        # expected에 원산지가 여러 개 있고, actual에 일부만 있는 경우
+        if "원산지" in str(location).lower():
+            # 괄호 안의 원산지 정보 비교
+            import re
+            expected_origins = re.findall(r'\(([^)]+)\)', expected)
+            actual_origins = re.findall(r'\(([^)]+)\)', actual)
+            
+            # expected에 여러 원산지가 있고 actual에 일부만 있는 경우 (OCR 누락 가능)
+            if len(expected_origins) > 1 and len(actual_origins) >= 1:
+                # actual의 원산지가 expected에 포함되어 있으면 OCR 누락으로 간주
+                for actual_origin in actual_origins:
+                    if any(actual_origin in exp_origin or exp_origin in actual_origin 
+                           for exp_origin in expected_origins):
+                        return True
+        
+        # 3. 카사바전분(태국, 베트남산) vs 카사바전분(태국산) 케이스
+        if "카사바전분" in expected and "카사바전분" in actual:
+            if "(태국, 베트남산)" in expected and "(태국산)" in actual:
+                return True
+            if "(태국산)" in expected and "(태국, 베트남산)" in actual:
+                return True
+        
+        return False
 
     def is_equivalent(a, b):
         if not a or not b:
@@ -556,10 +595,16 @@ def filter_issues_by_text_evidence(result, standard_json: str, ocr_text: str):
 
         expected = str(issue.get("expected", "") or "")
         actual   = str(issue.get("actual", "") or "")
+        location = str(issue.get("location", "") or "")
 
         # --- (0) 예외 허용: 동일하다고 간주하고 skip ---
         if is_equivalent(expected, actual):
             print("⚠️ 예외 허용: 동일 처리 → 오류 제거:", expected, actual)
+            continue
+
+        # --- (0-1) OCR 오류로 인한 잘못된 검출 제외 ---
+        if is_ocr_error_case(expected, actual, location):
+            print("⚠️ OCR 오류 케이스로 인식 → 오류 제거:", f"expected={expected}, actual={actual}")
             continue
 
         # --- (1) expected는 Standard 내 존재해야 함 ---
@@ -591,27 +636,62 @@ def highlight_ocr_errors(ocr_text: str, issues: list) -> str:
     """
     OCR 텍스트에서 오류 부분을 빨간색으로 하이라이트 처리
     """
-    if not ocr_text or not issues:
-        return ocr_text
-
+    if not ocr_text:
+        return ""
+    
     import html as html_mod
-    highlighted_text = html_mod.escape(ocr_text)
+    import re
+    
+    # OCR 텍스트를 원본 그대로 사용
+    highlighted_text = ocr_text
+    
+    if not issues:
+        # 이스케이프 후 줄바꿈 처리
+        highlighted_text = html_mod.escape(highlighted_text)
+        highlighted_text = highlighted_text.replace("\n", "<br>")
+        return highlighted_text
 
+    # 하이라이트할 텍스트들을 수집 (중복 제거, 긴 것부터)
+    highlight_texts = []
+    seen = set()
     for issue in issues:
         actual = issue.get("actual", "")
-        if not actual:
-            continue
-        escaped_actual = html_mod.escape(actual)
-        if escaped_actual in highlighted_text:
+        if actual:
+            actual_clean = str(actual).strip()
+            if actual_clean and actual_clean not in seen:
+                highlight_texts.append(actual_clean)
+                seen.add(actual_clean)
+    
+    # 긴 문자열부터 정렬 (겹침 방지)
+    highlight_texts.sort(key=len, reverse=True)
+    
+    # 하이라이트 적용 (뒤에서부터 적용하여 인덱스 변화 방지)
+    for highlight_text in highlight_texts:
+        # 정확히 일치하는 경우
+        if highlight_text in highlighted_text:
+            escaped_text = html_mod.escape(highlight_text)
             highlighted = (
-                "<span style=\"background-color:#ffcccc;"
-                " color:#cc0000; font-weight:bold; padding:2px 4px;"
-                " border-radius:3px;\">"
-                f"{escaped_actual}</span>"
+                '<span style="background-color:#ffcccc;'
+                ' color:#cc0000; font-weight:bold; padding:2px 4px;'
+                ' border-radius:3px;">'
+                f'{escaped_text}</span>'
             )
-            # 한 번만 교체
-            highlighted_text = highlighted_text.replace(escaped_actual, highlighted, 1)
-
+            # 모든 발생을 하이라이트
+            highlighted_text = highlighted_text.replace(highlight_text, highlighted)
+    
+    # HTML 이스케이프 처리 (하이라이트 태그는 제외)
+    # 정규식으로 하이라이트 태그를 보호하면서 나머지만 이스케이프
+    def escape_except_spans(text):
+        parts = re.split(r'(<span[^>]*>.*?</span>)', text)
+        result = []
+        for part in parts:
+            if part.startswith('<span'):
+                result.append(part)  # 하이라이트 태그는 그대로
+            else:
+                result.append(html_mod.escape(part))  # 나머지는 이스케이프
+        return ''.join(result)
+    
+    highlighted_text = escape_except_spans(highlighted_text)
     highlighted_text = highlighted_text.replace("\n", "<br>")
     return highlighted_text
 
