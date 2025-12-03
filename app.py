@@ -6,107 +6,46 @@ import json
 import re
 from supabase import create_client, Client
 
+# ===== Supabase 설정 =====
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# ===== Flask 백엔드 주소 =====
 FLASK_API_URL = "https://food-label-app-4.onrender.com"
 
 
-# ----------------- 유틸 함수 -----------------
-def clean_violation_text(violation_text):
-    """법령 위반 설명에서 노이즈 문자/괄호 제거"""
+# ===== 유틸: 위반 문구 정리 =====
+def clean_violation_text(violation_text: str):
+    """
+    - 불필요한 특수문자(, 전각괄호 등) 제거
+    - '... 위반' 까지만 남기고 뒤는 잘라냄
+    - 공백 정리
+    """
     if not violation_text:
         return violation_text
-    cleaned = violation_text
+
+    cleaned = str(violation_text)
+
+    # 이상한 특수문자 블록 제거
     while True:
         new_cleaned = re.sub(r'\s*[^()]*', '', cleaned)
         new_cleaned = re.sub(r'\s*（[^）]*）', '', new_cleaned)
         if new_cleaned == cleaned:
             break
         cleaned = new_cleaned
+
+    # '위반' 이라는 단어까지 자르기
     match = re.search(r'위반', cleaned)
     if match:
-        cleaned = cleaned[:match.end()].strip()
+        cleaned = cleaned[: match.end()].strip()
+
+    # 공백 정리
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
     return cleaned
 
 
-def build_highlight_html(ocr_text: str, issues: list) -> str:
-    """
-    서버에서 넘어온 design_ocr_highlighted_html 이 없거나
-    span 이 하나도 없을 때, 프론트에서 직접 하이라이트 HTML을 생성.
-
-    - ocr_text 에서 issues[*].actual 값을 찾아 <span> 으로 감쌈
-    - 줄바꿈은 <br> 로 치환
-    """
-    if not ocr_text:
-        return ""
-
-    text = str(ocr_text)
-
-    # 하이라이트 대상(actual) 수집
-    targets = []
-    seen = set()
-    for issue in issues or []:
-        actual = (issue or {}).get("actual", "")
-        if not actual:
-            continue
-        actual_clean = str(actual).strip()
-        if not actual_clean:
-            continue
-        if actual_clean in seen:
-            continue
-        seen.add(actual_clean)
-        targets.append(actual_clean)
-
-    # 하이라이트할 게 하나도 없으면 그냥 텍스트만 HTML로 변환
-    if not targets:
-        escaped = (
-            text.replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-        )
-        escaped = escaped.replace("\n", "<br>")
-        return escaped
-
-    # 긴 문자열부터 대체 (겹침 방지)
-    targets.sort(key=len, reverse=True)
-
-    # 텍스트 안에 그대로 <, > 같은 게 있을 확률은 거의 없어서
-    # 간단히 문자열 치환으로 처리
-    for t in targets:
-        if t in text:
-            span = (
-                "<span style=\"background-color:#ffcccc; "
-                "color:#cc0000; font-weight:bold; padding:2px 4px; "
-                "border-radius:3px;\">"
-                f"{t}"
-                "</span>"
-            )
-            # 일단 첫 번째 등장만 강조 (필요하면 count=0 제거해서 전체)
-            text = text.replace(t, span, 1)
-
-    # 최종적으로 나머지 텍스트 중 & < > 는 한 번 더 이스케이프
-    # 이미 들어가 있는 <span> 은 건드리지 않기 위해 split 사용
-    parts = re.split(r'(<span[^>]*>.*?</span>)', text)
-    safe_parts = []
-    for part in parts:
-        if part.startswith("<span"):
-            safe_parts.append(part)
-        else:
-            safe = (
-                part.replace("&", "&amp;")
-                    .replace("<", "&lt;")
-                    .replace(">", "&gt;")
-            )
-            safe_parts.append(safe)
-    html = "".join(safe_parts)
-    html = html.replace("\n", "<br>")
-    return html
-
-
-# ----------------- 스트림릿 기본 설정 -----------------
+# ===== 페이지 공통 설정 =====
 st.set_page_config(page_title="바른식품표시", layout="wide")
 
 if "user" not in st.session_state:
@@ -117,7 +56,7 @@ if "page" not in st.session_state:
     st.session_state["page"] = "login"
 
 
-# ----------------- 로그인 / 회원가입 화면 -----------------
+# ===== 로그인 페이지 =====
 def show_login_page():
     st.title("🔒 바른식품표시 로그인")
 
@@ -134,7 +73,9 @@ def show_login_page():
             st.rerun()
             return
         try:
-            res = supabase.auth.sign_in_with_password({"email": email, "password": password})
+            res = supabase.auth.sign_in_with_password(
+                {"email": email, "password": password}
+            )
             user = getattr(res, "user", None)
             if user is None:
                 st.session_state["login_error"] = "로그인 실패: 이메일/비밀번호를 확인해 주세요."
@@ -155,6 +96,7 @@ def show_login_page():
         st.rerun()
 
 
+# ===== 회원가입 페이지 =====
 def show_signup_page():
     st.title("🆕 회원가입")
 
@@ -166,7 +108,7 @@ def show_signup_page():
             st.error("이메일과 비밀번호를 모두 입력해 주세요.")
         else:
             try:
-                res = supabase.auth.sign_up({"email": email, "password": password})
+                supabase.auth.sign_up({"email": email, "password": password})
                 st.success("회원가입이 완료되었습니다! 이제 로그인해 주세요.")
                 st.session_state["page"] = "login"
                 st.rerun()
@@ -178,7 +120,7 @@ def show_signup_page():
         st.rerun()
 
 
-# ----------------- 공통 상단 바 -----------------
+# ===== 상단 바 =====
 def show_top_bar():
     cols = st.columns([3, 1])
     with cols[0]:
@@ -193,7 +135,7 @@ def show_top_bar():
             st.rerun()
 
 
-# ----------------- 메인 앱 -----------------
+# ===== 메인 앱 =====
 def show_main_app():
     show_top_bar()
 
@@ -210,6 +152,7 @@ def show_main_app():
     # --- 자동 변환 ---
     elif menu == "자동 변환":
         st.title("📄 자동 변환 (QA 기반 표시사항 생성)")
+
         uploaded_files = st.file_uploader(
             "QA 자료 업로드 (여러 파일 가능)",
             type=["pdf", "jpg", "jpeg", "png", "xlsx", "xls"],
@@ -246,19 +189,19 @@ def show_main_app():
         st.title("🔍 오류 자동체크 ")
 
         standard_excel = st.file_uploader(
-            "📘 기준데이터 (Excel / PDF)",
-            type=["xlsx", "xls", "pdf"],
+            "📘 기준데이터 (Excel / PDF)", type=["xlsx", "xls", "pdf"]
         )
         design_file = st.file_uploader(
-            "🖼️ 디자인 파일 (PDF / 이미지)",
-            type=["pdf", "jpg", "jpeg", "png"],
+            "🖼️ 디자인 파일 (PDF / 이미지)", type=["pdf", "jpg", "jpeg", "png"]
         )
 
         if st.button("결과 확인하기"):
             if not design_file:
                 st.error("디자인 파일을 업로드하세요.")
             else:
-                files = {"design_file": (design_file.name, design_file.read(), design_file.type)}
+                files = {
+                    "design_file": (design_file.name, design_file.read(), design_file.type)
+                }
                 if standard_excel:
                     files["standard_excel"] = (
                         standard_excel.name,
@@ -278,41 +221,60 @@ def show_main_app():
                     else:
                         if response.status_code == 200:
                             result = response.json()
+
                             st.success("검사 완료!")
 
-                            # --------- 하이라이트 영역 ---------
+                            # ===== 1. 상단 하이라이트 뷰 =====
                             st.subheader("🔎 AI 정밀 분석 결과 (하이라이트)")
-
-                            # 1순위: 서버에서 만들어준 HTML 사용
                             highlight_html = result.get("design_ocr_highlighted_html")
-
-                            # 혹시 없거나 span 이 하나도 없으면 프론트에서 재생성
-                            if not highlight_html or "<span" not in highlight_html:
-                                ocr_text = result.get("design_ocr_text") or result.get("ocr_text") or ""
-                                issues = result.get("issues", [])
-                                highlight_html = build_highlight_html(ocr_text, issues)
-
                             if highlight_html:
                                 st.markdown(
-                                    "<div style='font-size:13px; color:#555; "
-                                    "margin-bottom:8px;'>"
-                                    "* 붉은색으로 표시된 부분은 기준 정보와 다르거나 오타가 "
-                                    "의심되는 곳입니다.</div>",
+                                    "<div style='font-size:13px; color:#555; margin-bottom:8px;'>"
+                                    "* 붉은색으로 표시된 부분은 기준 정보와 다르거나 오타가 의심되는 곳입니다."
+                                    "</div>",
                                     unsafe_allow_html=True,
                                 )
+                                # 🔴 server.py 에서 만들어준 HTML 그대로 렌더
                                 st.markdown(highlight_html, unsafe_allow_html=True)
                             else:
                                 st.write("하이라이트 결과가 없습니다.")
 
                             st.markdown("---")
 
-                            # --------- 점수 / 법적 준수 리포트 ---------
+                            # ===== 2. 점수 + 법령 위반 리포트 =====
                             score = result.get("score", "N/A")
                             law = result.get("law_compliance", {}) or {}
                             status_raw = law.get("status", "")
                             violations_raw = law.get("violations", []) or []
-                            violations = [clean_violation_text(v) for v in violations_raw]
 
+                            # 🔧 violations 가 HTML 블록으로 올 수도 있으므로 정규화
+                            violations = []
+                            for v in violations_raw:
+                                if not v:
+                                    continue
+                                v_str = str(v)
+
+                                # 1) <li>...</li> 가 포함된 HTML 블록인 경우
+                                if "<li" in v_str:
+                                    # li 내용만 추출
+                                    li_contents = re.findall(
+                                        r'<li[^>]*>(.*?)</li>',
+                                        v_str,
+                                        flags=re.IGNORECASE | re.DOTALL,
+                                    )
+                                    for li in li_contents:
+                                        # li 안의 태그 제거
+                                        plain = re.sub(r"<[^>]+>", "", li)
+                                        plain = clean_violation_text(plain)
+                                        if plain:
+                                            violations.append(plain)
+                                else:
+                                    # 2) 그냥 문자열인 경우
+                                    plain = clean_violation_text(v_str)
+                                    if plain:
+                                        violations.append(plain)
+
+                            # 뱃지 색상
                             if status_raw.lower() == "compliant":
                                 badge_color = "#2e7d32"
                                 badge_label = "법률 준수"
@@ -345,9 +307,7 @@ def show_main_app():
                                 <span style="background:#2962ff; color:#ffffff; padding:6px 14px; border-radius:999px; font-weight:700;">{score}점</span>
                               </div>
                               <div style="margin-top:4px; font-size:14px;">법률 준수 상태:
-                                <span style="background:{badge_color}1A; color:{badge_color}; padding:4px 12px; border-radius:999px; font-weight:600;">
-                                  {badge_icon} {badge_label}
-                                </span>
+                                <span style="background:{badge_color}1A; color:{badge_color}; padding:4px 12px; border-radius:999px; font-weight:600;">{badge_icon} {badge_label}</span>
                               </div>
                               {violations_html}
                             </div>
@@ -356,7 +316,7 @@ def show_main_app():
 
                             st.markdown("---")
 
-                            # --------- 상세 문제 목록 ---------
+                            # ===== 3. 상세 문제 카드 =====
                             st.subheader("📌 상세 문제 목록")
                             issues = result.get("issues", []) or []
                             if not issues:
@@ -371,24 +331,12 @@ def show_main_app():
                                     suggestion = issue.get("suggestion") or ""
 
                                     card_html = f"""
-                                    <div style="background:#fff9e6; border-radius:14px;
-                                                padding:16px 20px; margin-bottom:12px;
-                                                border-left:6px solid #ffb300;">
-                                      <div style="font-weight:700; margin-bottom:4px;">
-                                        [문제 {i}] {title}
-                                      </div>
-                                      <div style="font-size:13px; color:#555; margin-bottom:8px;">
-                                        {desc}
-                                      </div>
-                                      <div style="font-size:13px; margin-bottom:4px;">
-                                        <b>정답:</b> {expected}
-                                      </div>
-                                      <div style="font-size:13px; margin-bottom:4px;">
-                                        <b>실제:</b> {actual}
-                                      </div>
-                                      <div style="font-size:13px; color:#1565c0; margin-top:4px;">
-                                        <b>수정 제안:</b> {suggestion}
-                                      </div>
+                                    <div style="background:#fff9e6; border-radius:14px; padding:16px 20px; margin-bottom:12px; border-left:6px solid #ffb300;">
+                                      <div style="font-weight:700; margin-bottom:4px;">[문제 {i}] {title}</div>
+                                      <div style="font-size:13px; color:#555; margin-bottom:8px;">{desc}</div>
+                                      <div style="font-size:13px; margin-bottom:4px;"><b>정답:</b> {expected}</div>
+                                      <div style="font-size:13px; margin-bottom:4px;"><b>실제:</b> {actual}</div>
+                                      <div style="font-size:13px; color:#1565c0; margin-top:4px;"><b>수정 제안:</b> {suggestion}</div>
                                     </div>
                                     """
                                     st.markdown(card_html, unsafe_allow_html=True)
@@ -415,7 +363,7 @@ def show_main_app():
         )
 
 
-# ----------------- 엔트리 포인트 -----------------
+# ===== 메인 엔트리 =====
 def main():
     if st.session_state["user"] is None:
         if st.session_state["page"] == "signup":
