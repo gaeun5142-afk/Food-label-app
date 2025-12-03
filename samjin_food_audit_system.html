@@ -495,7 +495,8 @@
 
             // 2. '빨간펜'이 모두 그려진 '최종 텍스트'를 'OCR 추출 텍스트' 칸 (가운데)에 삽입
             // (textContent 대신 innerHTML을 사용해서 '빨간펜'(span 태그)이 보이게 함)
-            ocrContainer.innerHTML = originalText;
+            ocrContainer.innerHTML = result.highlightedHtml;
+
         }
 
         // --- 이벤트 리스너 연결 ---
@@ -556,5 +557,6 @@
 </body>
 
 </html>
+
 
 
