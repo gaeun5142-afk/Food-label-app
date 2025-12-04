@@ -17,7 +17,7 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
-# API 키 설정
+# API 키 설정 (환경변수: CHATGPT_API_KEY)
 CHATGPT_API_KEY = os.getenv('CHATGPT_API_KEY')
 if not CHATGPT_API_KEY:
     print("🚨 경고: .env 파일에 CHATGPT_API_KEY가 없습니다!")
@@ -411,25 +411,22 @@ def clean_html_text(text):
     if not isinstance(text, str):
         return text
 
-    # HTML 엔티티 디코딩 먼저 수행 (예: &lt; → <, &gt; → >, &amp; → &)
+    # HTML 엔티티 디코딩 먼저 수행
     text = unescape(text)
 
-    # HTML 태그 완전히 제거 (내용은 유지)
-    # 예: "<div>식품등의 표시기준 제X조 위반</div>" → "식품등의 표시기준 제X조 위반"
+    # 태그 제거
     text = re.sub(r'<[^>]+>', '', text)
-
-    # HTML 코드 패턴 제거 (예: "<div style=...>", "<ul style=...>" 등)
     text = re.sub(r'<div[^>]*>', '', text, flags=re.IGNORECASE)
     text = re.sub(r'</div>', '', text, flags=re.IGNORECASE)
     text = re.sub(r'<ul[^>]*>', '', text, flags=re.IGNORECASE)
     text = re.sub(r'</ul>', '', text, flags=re.IGNORECASE)
     text = re.sub(r'<li[^>]*>', '', text, flags=re.IGNORECASE)
     text = re.sub(r'</li>', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'<[^>]+>', '', text)  # 남은 모든 HTML 태그 제거
+    text = re.sub(r'<[^>]+>', '', text)
 
-    # 연속된 공백만 정리 (줄바꿈과 내용은 보존)
-    text = re.sub(r'[ \t]+', ' ', text)  # 탭과 공백만 정리
-    text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)  # 3개 이상의 연속 줄바꿈만 2개로
+    # 공백 정리
+    text = re.sub(r'[ \t]+', ' ', text)
+    text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)
     return text.strip()
 
 
@@ -445,48 +442,28 @@ def detect_label_area(image_file):
         model = genai.GenerativeModel(MODEL_NAME)
         detection_prompt = """
  이 이미지는 식품 포장지 디자인입니다. 이미지에서 **식품표시사항 영역**만 찾아주세요.
- 식품표시사항 영역은 다음 정보가 포함된 사각형 영역입니다:
- - 제품명, 식품유형, 내용량
- - 원재료명
- - 영양정보
- - 알레르기 정보
- - 제조원 정보
- - 주의사항
-
- **무시할 영역:**
- - 브랜드 로고
- - 제품 사진
- - 조리법/레시피
- - 홍보 문구
- - 장식 요소
-
- JSON 형식으로 응답하세요:
+ (중략) JSON으로 bbox만 주세요.
  {
    "found": true/false,
-   "bbox": {
-     "x1": 왼쪽 상단 X 좌표 (픽셀),
-     "y1": 왼쪽 상단 Y 좌표 (픽셀),
-     "x2": 오른쪽 하단 X 좌표 (픽셀),
-     "y2": 오른쪽 하단 Y 좌표 (픽셀)
-   },
-   "description": "찾은 영역 설명"
+   "bbox": {"x1": 0, "y1": 0, "x2": 100, "y2": 100},
+   "description": "..."
  }
- 식품표시사항 영역을 찾을 수 없으면 "found": false로 응답하세요.
         """
 
         response = model.generate_content([detection_prompt, img_pil])
         result_text = response.text.strip()
 
-        # JSON 파싱
-        if result_text.startswith("
-json"):
-            result_text = result_text[7:-3]
-        elif result_text.startswith("
-"):
+        # 코드블록(```json ... ```) 처리
+        if result_text.startswith("```json"):
+            result_text = result_text[7:]
+            if result_text.endswith("```"):
+                result_text = result_text[:-3]
+        elif result_text.startswith("```"):
             lines = result_text.split("\n")
-            if lines[0].startswith("
-"):
-                result_text = "\n".join(lines[1:-1])
+            if lines[0].startswith("```"):
+                result_text = "\n".join(lines[1:])
+            if result_text.endswith("```"):
+                result_text = result_text[:-3]
 
         detection_result = json.loads(result_text)
 
@@ -524,33 +501,9 @@ def clean_ai_response(data):
         cleaned = {}
         for key, value in data.items():
             if key == 'violations' and isinstance(value, list):
-                # violations 배열의 각 항목에서 HTML 제거
-                cleaned_violations = []
-                for item in value:
-                    if isinstance(item, dict):
-                        # 객체인 경우
-                        cleaned_item = {}
-                        for k, v in item.items():
-                            if isinstance(v, str):
-                                cleaned_item[k] = clean_html_text(v)
-                            else:
-                                cleaned_item[k] = v
-                        cleaned_violations.append(cleaned_item)
-                    else:
-                        # 문자열인 경우
-                        cleaned_violations.append(clean_html_text(item))
-                cleaned[key] = cleaned_violations
+                cleaned[key] = [clean_ai_response(item) for item in value]
             elif key == 'issues' and isinstance(value, list):
-                # issues 배열의 각 항목 처리
-                cleaned[key] = []
-                for item in value:
-                    if isinstance(item, dict):
-                        cleaned_item = {}
-                        for k, v in item.items():
-                            cleaned_item[k] = clean_html_text(v) if isinstance(v, str) else v
-                        cleaned[key].append(cleaned_item)
-                    else:
-                        cleaned[key].append(clean_html_text(item) if isinstance(item, str) else item)
+                cleaned[key] = [clean_ai_response(item) for item in value]
             elif isinstance(value, str):
                 cleaned[key] = clean_html_text(value)
             elif isinstance(value, (dict, list)):
@@ -578,14 +531,12 @@ def extract_ingredient_info_from_image(image_file):
 
         result_text = response.text.strip()
 
-        # JSON 파싱
-        if result_text.startswith("
-json"):
-            result_text = result_text[7:-3]
-        elif result_text.startswith("
-"):
-            result_text = result_text.split("
-")[1].strip()
+        # 코드블록 처리
+        if result_text.startswith("```json"):
+            result_text = result_text[7:-3] if result_text.endswith("```") else result_text[7:]
+        elif result_text.startswith("```"):
+            result_text = result_text.strip("`")
+
         if result_text.startswith("json"):
             result_text = result_text[4:].strip()
 
@@ -614,10 +565,7 @@ def create_standard_excel(data):
             ingredients_data = []
             if 'structured_list' in data['ingredients']:
                 for idx, item in enumerate(data['ingredients']['structured_list'], 1):
-                    ingredients_data.append({
-                        '순번': idx,
-                        '원재료명': item
-                    })
+                    ingredients_data.append({'순번': idx, '원재료명': item})
             ingredients_df = pd.DataFrame(ingredients_data)
             if not ingredients_df.empty:
                 ingredients_df.to_excel(writer, sheet_name='원재료명', index=False)
@@ -741,7 +689,7 @@ def create_standard():
     print(f"📂 처리 중: 엑셀 1개 + 원재료 이미지 {len(raw_images)}장 (정보 추출 완료)")
 
     try:
-        # [수정할 부분] 창의성(Temperature) 0으로 설정해서 로봇처럼 만들기
+        # 창의성(Temperature) 0으로 설정
         generation_config = {"temperature": 0.0}
         model = genai.GenerativeModel(MODEL_NAME, generation_config=generation_config)
         response = model.generate_content(parts)
@@ -749,26 +697,17 @@ def create_standard():
         # JSON 파싱
         result_text = response.text.strip()
 
-        # JSON 코드 블록 제거
-        if result_text.startswith("
-json"):
+        # 코드블록 처리
+        if result_text.startswith("```json"):
             result_text = result_text[7:]
-            if result_text.endswith("
-"):
+            if result_text.endswith("```"):
                 result_text = result_text[:-3]
-        elif result_text.startswith("
-"):
-            #
-            ...
-            형식 처리
+        elif result_text.startswith("```"):
             lines = result_text.split("\n")
-            if lines[0].startswith("
-"):
+            if lines[0].startswith("```"):
                 result_text = "\n".join(lines[1:])
-            if result_text.endswith("
-"):
+            if result_text.endswith("```"):
                 result_text = result_text[:-3]
-
         result_text = result_text.strip()
 
         # JSON 파싱 시도
@@ -781,12 +720,11 @@ json"):
 
             # JSON 수정 시도 (마지막 쉼표 제거 등)
             try:
-                # 마지막 쉼표 제거 시도
                 result_text_fixed = result_text.replace(',\n}', '\n}').replace(',\n]', '\n]')
                 result = json.loads(result_text_fixed)
                 print("✅ JSON 수정 후 파싱 성공")
-            except:
-                return jsonify({"error": f"JSON 파싱 실패: {str(json_err)}. 응답의 일부: {result_text[:200]}..."}), 500
+            except Exception as e2:
+                return jsonify({"error": f"JSON 파싱 실패: {str(json_err)}. 응답의 일부: {result_text[:200]}... / 보정오류: {e2}"}), 500
 
         return jsonify(result)
 
@@ -859,7 +797,6 @@ def read_standard_excel():
                 'continuous_text': continuous_text
             }
         elif not first_sheet_df.empty:
-            # 첫 번째 시트의 첫 번째 컬럼을 원재료명으로 사용
             first_column = first_sheet_df.columns[0]
             if '원재료명' in first_sheet_df.columns:
                 ingredients_list = first_sheet_df['원재료명'].dropna().tolist()
@@ -934,7 +871,6 @@ def verify_design():
 
             standard_data = {}
             if not first_sheet_df.empty:
-                # 원재료명 컬럼 찾기 (단순화)
                 col = first_sheet_df.columns[0]
                 if '원재료명' in first_sheet_df.columns:
                     col = '원재료명'
@@ -951,20 +887,15 @@ def verify_design():
         except Exception as e:
             return jsonify({"error": f"엑셀 읽기 실패: {str(e)}"}), 400
 
-    # 3. 법령 파일 읽기 (수정됨: 모든 법령 파일 동등하게 로딩)
+    # 3. 법령 파일 읽기
     law_text = ""
-
-    # (1) 현재 폴더의 모든 'law_'로 시작하는 txt 파일 찾기
-    # law_context.txt, law_text_식품위생법.txt 등 모두 포함됨
     all_law_files = glob.glob('law_*.txt')
-
-    print(f"📚 법령 파일 로딩 중: {len(all_llaw_files)}개 발견")
+    print(f"📚 법령 파일 로딩 중: {len(all_law_files)}개 발견")
 
     for file_path in all_law_files:
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
-                # 각 법령 파일 내용을 명확히 구분해서 합치기
                 law_text += f"\n\n=== [참고 법령: {file_path}] ===\n{content}\n==========================\n"
         except Exception as e:
             print(f"⚠️ 법령 파일 읽기 실패 ({file_path}): {e}")
@@ -987,7 +918,6 @@ def verify_design():
 
         if is_cropped:
             print("✂️ 식품표시사항 영역만 크롭하여 사용합니다.")
-            # 크롭된 이미지를 PIL Image로 변환
             cropped_image.seek(0)
             cropped_pil = PIL.Image.open(cropped_image)
             parts.append(cropped_pil)
@@ -995,40 +925,28 @@ def verify_design():
             print("📄 전체 이미지를 사용합니다.")
             parts.append(process_file_to_part(design_file))
 
-    # 5. AI 호출 및 결과 처리 (여기가 중요)
+    # 5. AI 호출 및 결과 처리
     try:
-        # 창의성 0.0 설정 (정규성 확보)
-        model = genai.GenerativeModel(
-            MODEL_NAME,
-            generation_config={"temperature": 0.0}
-        )
-
+        model = genai.GenerativeModel(MODEL_NAME, generation_config={"temperature": 0.0})
         response = model.generate_content(parts)
         result_text = response.text.strip()
 
-        # [강력한 JSON 파싱 로직] 정규표현식으로 JSON만 추출
+        # JSON만 추출
         json_match = re.search(r"(\{.*\})", result_text, re.DOTALL)
-
         if json_match:
             clean_json = json_match.group(1)
-            # 간단한 쉼표 보정
             clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
             result = json.loads(clean_json)
-            # HTML 태그 제거
             result = clean_ai_response(result)
             return jsonify(result)
         else:
-            # JSON 패턴 못 찾으면 원본에서 시도 (혹시 모르니)
-            clean_json = result_text.replace("
-", "").strip()
+            clean_json = result_text.replace("```", "").strip()
             result = json.loads(clean_json)
-            # HTML 태그 제거
             result = clean_ai_response(result)
             return jsonify(result)
 
     except Exception as e:
         print(f"❌ 검증 오류: {e}")
-        # 상세 에러 로그 출력
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
@@ -1040,13 +958,10 @@ def upload_qa():
     """QA 자료를 업로드하고 식품표시사항을 작성합니다."""
     print("📋 QA 자료 업로드 및 식품표시사항 작성 시작...")
 
-    # QA 자료 파일들 (엑셀, 이미지 등)
     qa_files = request.files.getlist('qa_files')
-
     if not qa_files or len(qa_files) == 0:
         return jsonify({"error": "QA 자료 파일이 필요합니다."}), 400
 
-    # AI에게 보낼 데이터 꾸러미 만들기
     parts = []
 
     qa_prompt = """
@@ -1075,15 +990,12 @@ def upload_qa():
     }
 }
 """
-
-    # 법령 정보 추가
     if ALL_LAW_TEXT:
         qa_prompt += f"\n\n--- [참고 법령] ---\n{ALL_LAW_TEXT}\n--- [법령 끝] ---\n"
 
     parts.append(qa_prompt)
 
-    # QA 파일들 처리
-    for qa_file in qa_files[:20]:  # 최대 20개 파일
+    for qa_file in qa_files[:20]:
         file_part = process_file_to_part(qa_file)
         if file_part:
             parts.append(file_part)
@@ -1094,26 +1006,19 @@ def upload_qa():
         model = genai.GenerativeModel(MODEL_NAME)
         response = model.generate_content(parts)
 
-        # JSON 파싱
         result_text = response.text.strip()
 
-        # JSON 코드 블록 제거
-        if result_text.startswith("
-json"):
+        # 코드블록 처리
+        if result_text.startswith("```json"):
             result_text = result_text[7:]
-            if result_text.endswith("
-"):
+            if result_text.endswith("```"):
                 result_text = result_text[:-3]
-        elif result_text.startswith("
-"):
+        elif result_text.startswith("```"):
             lines = result_text.split("\n")
-            if lines[0].startswith("
-"):
+            if lines[0].startswith("```"):
                 result_text = "\n".join(lines[1:])
-            if result_text.endswith("
-"):
+            if result_text.endswith("```"):
                 result_text = result_text[:-3]
-
         result_text = result_text.strip()
 
         # JSON 파싱 시도
@@ -1123,8 +1028,6 @@ json"):
             print(f"❌ JSON 파싱 오류: {json_err}")
             print(f"응답 텍스트 (처음 1000자): {result_text[:1000]}")
             print(f"오류 위치: line {json_err.lineno}, column {json_err.colno}")
-
-            # JSON 수정 시도
             try:
                 result_text_fixed = result_text.replace(',\n}', '\n}').replace(',\n]', '\n]')
                 result = json.loads(result_text_fixed)
