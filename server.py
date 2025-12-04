@@ -18,11 +18,11 @@ app = Flask(__name__)
 CORS(app)
 
 # API 키 설정
-GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
-if not GOOGLE_API_KEY:
-    print("🚨 경고: .env 파일에 GOOGLE_API_KEY가 없습니다!")
+CHATGPT_API_KEY = os.getenv('CHATGPT_API_KEY')
+if not CHATGPT_API_KEY:
+    print("🚨 경고: .env 파일에 CHATGPT_API_KEY가 없습니다!")
 else:
-    genai.configure(api_key=GOOGLE_API_KEY)
+    genai.configure(api_key=CHATGPT_API_KEY)
 
 # Gemini 모델 설정 (기본값, 자동 감지로 덮어씌워질 수 있음)
 MODEL_NAME = 'gemini-1.5-flash'
@@ -74,7 +74,7 @@ def check_available_models():
 
 
 # 서버 시작 시 모델 확인 및 자동 설정
-if GOOGLE_API_KEY:
+if CHATGPT_API_KEY:
     check_available_models()
 else:
     print(f"⚠️ API 키가 없어 모델 확인을 건너뜁니다. 기본 모델 사용: {MODEL_NAME}\n")
@@ -1148,3 +1148,4 @@ if __name__ == '__main__':
     print(" - QA 자료 업로드 지원")
     from waitress import serve
     serve(app, host='0.0.0.0', port=8080)
+
