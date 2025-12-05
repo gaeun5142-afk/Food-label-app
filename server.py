@@ -1184,6 +1184,32 @@ def verify_design():
             clean_json = result_text.replace("``````", "").strip()
             return jsonify(json.loads(clean_json))
 
+        # [핵심 수정] 2. 안전장치: design_ocr_text가 비어있으면 채워넣기
+        # ---------------------------------------------------------
+        if not result_json.get("design_ocr_text"):
+            print("⚠️ 검증 결과에 OCR 텍스트가 누락됨. 별도 OCR 수행 중...")
+            try:
+                design_file.seek(0) # 파일 다시 읽기 위해 초기화
+                ocr_model = genai.GenerativeModel('gemini-1.5-flash') # 가벼운 모델로 빠르게
+                ocr_response = ocr_model.generate_content([PROMPT_EXTRACT_ONLY, process_file_to_part(design_file)])
+                
+                # OCR 결과 파싱
+                ocr_text_raw = ocr_response.text
+                if "```
+                     ocr_json = json.loads(ocr_text_raw.split("```json").split("```
+                     result_json["design_ocr_text"] = ocr_json.get("text", "")
+                else:
+                     # 그냥 텍스트면 통째로 넣음
+                     result_json["design_ocr_text"] = ocr_text_raw.strip()
+                     
+                print(f"✅ 별도 OCR 완료 (길이: {len(result_json['design_ocr_text'])})")
+                
+            except Exception as e:
+                print(f"❌ 별도 OCR 실패: {e}")
+                result_json["design_ocr_text"] = "OCR 텍스트를 불러올 수 없습니다. (서버 오류)"
+
+        return jsonify(result_json)
+    
     except Exception as e:
         print(f"❌ 검증 오류: {e}")
         # 상세 에러 로그 출력
