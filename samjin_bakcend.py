@@ -9,7 +9,7 @@ import PIL.Image
 
 from dotenv import load_dotenv
 
-# === OpenAI (ChatGPT) ===
+# === OpenAI (ChatGPT Vision) ===
 from openai import OpenAI
 
 
@@ -32,8 +32,7 @@ CORS(app)
 # --- 4. OpenAI Vision OCR 함수 ---
 def get_ocr_text_from_image(image_file):
     """
-    OpenAI GPT-Vision 모델을 사용하여 이미지 속 텍스트(OCR)를 추출합니다.
-    정확도 높음! Gemini 코드 완전 제거됨!
+    OpenAI GPT Vision 모델을 사용하여 이미지 속 텍스트(OCR)를 추출합니다.
     """
 
     try:
@@ -55,13 +54,13 @@ def get_ocr_text_from_image(image_file):
         )
 
         response = client.chat.completions.create(
-            model="gpt-4o-mini",   # 더 정확하게 하고 싶으면 gpt-4o 로 변경
+            model="gpt-4o-mini",   # 더 정확도 높이려면 "gpt-4o"
             messages=[
                 {
                     "role": "user",
                     "content": [
                         {
-                            "type": "input_image",
+                            "type": "image_url",
                             "image_url": {
                                 "url": f"data:image/png;base64,{img_b64}"
                             },
@@ -93,7 +92,6 @@ def analyze_image():
 
     print(f"\n--- {time.strftime('%Y-%m-%d %H:%M:%S')} ---")
 
-    # 파일 체크
     if "file" not in request.files:
         return jsonify({"error": "file 필드가 비어 있습니다."}), 400
 
@@ -104,23 +102,15 @@ def analyze_image():
     print(f"서버: 파일 '{file.filename}' 수신 완료")
     print("서버: 🤖 OpenAI Vision OCR 시작...")
 
-    # OCR 실행
     ocr_text = get_ocr_text_from_image(file)
-
     print(f"서버: OCR 완료! (텍스트 길이: {len(ocr_text)}글자)")
 
-    # 결과 JSON 반환
     result = {
         "status": "OCR 완료 (OpenAI Vision)",
-        "typos": 0,             # 이후 백엔드 검증 기능과 연동 가능
+        "typos": 0,
         "violations": 0,
         "ocrText": ocr_text,
-        "aiAnalysis": [
-            {
-                "type": "info",
-                "text": "이미지 텍스트 추출 완료 (AI Vision OCR)",
-            }
-        ],
+        "analysis_list": [],  # 프론트 버전 5.0 구조 기준
     }
 
     print("서버: 분석 결과 전송 완료 ✔️")
@@ -131,7 +121,9 @@ def analyze_image():
 if __name__ == "__main__":
     print("-----------------------------------------------------")
     print(" 삼진식품 원재료 법령 점검 플랫폼 - OCR 서버 (OpenAI 전용 Ver.)")
-    print(" Gemini 코드 완전 제거 완료 ✓")
-    print(" 이미지 OCR은 gpt-4o-mini Vision 모델 기반")
+    print(" Google API 완전 제거 ✓")
+    print(" Vision OCR: gpt-4o-mini")
     print("-----------------------------------------------------")
     app.run(debug=True, port=5000)
+
+
