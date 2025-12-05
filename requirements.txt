@@ -10,3 +10,4 @@ Pillow
 waitress
 openpyxl
 pandas
+openai
