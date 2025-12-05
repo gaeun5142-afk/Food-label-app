@@ -292,27 +292,46 @@ class OpenAICompatModel:
         if generation_config and "temperature" in generation_config:
             self.temperature = generation_config["temperature"]
 
-    def _filepart_to_image_content(self, part: dict) -> dict | None:
-        try:
-            mime = part.get("mime_type") or "image/png"
-            data = part.get("data")
-            if not data:
-                return None
-            b64 = base64.b64encode(data).decode("utf-8")
-            data_url = f"data:{mime};base64,{b64}"
-            return {"type": "input_image", "image_url": {"url": data_url}}
-        except Exception:
+    def _filepart_to_image_content(part: dict) -> dict | None:
+    try:
+        mime = part.get("mime_type") or "image/png"
+        data = part.get("data")
+        if not data:
             return None
+        
+        b64 = base64.b64encode(data).decode("utf-8")
+        data_url = f"data:{mime};base64,{b64}"
 
-    def _pil_to_image_content(self, pil_img) -> dict | None:
-        try:
-            buf = io.BytesIO()
-            pil_img.save(buf, format="PNG")
-            buf.seek(0)
-            b64 = base64.b64encode(buf.read()).decode("utf-8")
-            return {"type": "input_image", "image_url": {"url": f"data:image/png;base64,{b64}"}}
-        except Exception:
-            return None
+        # ===== 핵심 수정 =====
+        return {
+            "type": "image_url",
+            "image_url": {
+                "url": data_url
+            }
+        }
+        # ====================
+
+    except Exception:
+        return None
+
+
+  def _pil_to_image_content(self, pil_img) -> dict | None:
+    try:
+        buf = io.BytesIO()
+        pil_img.save(buf, format="PNG")
+        buf.seek(0)
+        b64 = base64.b64encode(buf.read()).decode("utf-8")
+
+        return {
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:image/png;base64,{b64}"
+            }
+        }
+
+    except Exception:
+        return None
+
 
     def generate_content(self, parts: list) -> OpenAICompatResponse:
         """
