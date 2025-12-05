@@ -293,44 +293,60 @@ class OpenAICompatModel:
             self.temperature = generation_config["temperature"]
 
     def _filepart_to_image_content(part: dict) -> dict | None:
+    """
+    기존: base64로 data_url 생성 → 메시지 포함
+    변경: OpenAI 파일 업로드 후 file_id만 content에 포함
+    """
     try:
-        mime = part.get("mime_type") or "image/png"
         data = part.get("data")
         if not data:
             return None
-        
-        b64 = base64.b64encode(data).decode("utf-8")
-        data_url = f"data:{mime};base64,{b64}"
 
-        # ===== 핵심 수정 =====
+        # 파일 업로드
+        uploaded = client.files.create(
+            file=data,
+            purpose="vision"
+        )
+
         return {
             "type": "image_url",
             "image_url": {
-                "url": data_url
+                "file_id": uploaded.id
             }
         }
-        # ====================
 
-    except Exception:
+    except Exception as e:
+        print(f"⚠ 이미지 업로드 실패(_filepart_to_image_content): {e}")
         return None
 
 
-  def _pil_to_image_content(self, pil_img) -> dict | None:
+ def _pil_to_image_content(self, pil_img) -> dict | None:
+    """
+    기존: PIL → base64 문자열로 변환해서 메시지에 포함
+    변경: PIL → bytes → OpenAI 업로드 후 file_id만 전달
+    """
     try:
         buf = io.BytesIO()
         pil_img.save(buf, format="PNG")
         buf.seek(0)
-        b64 = base64.b64encode(buf.read()).decode("utf-8")
+        img_bytes = buf.getvalue()
+
+        uploaded = client.files.create(
+            file=img_bytes,
+            purpose="vision"
+        )
 
         return {
             "type": "image_url",
             "image_url": {
-                "url": f"data:image/png;base64,{b64}"
+                "file_id": uploaded.id
             }
         }
 
-    except Exception:
+    except Exception as e:
+        print(f"⚠ PIL 이미지 업로드 실패(_pil_to_image_content): {e}")
         return None
+
 
 
     def generate_content(self, parts: list) -> OpenAICompatResponse:
