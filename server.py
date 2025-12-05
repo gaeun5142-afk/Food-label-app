@@ -1055,7 +1055,6 @@ def read_standard_excel():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
-# 2단계: 검증하기 (엑셀 파일 또는 JSON + 디자인 이미지)
 @app.route('/api/verify-design', methods=['POST'])
 def verify_design():
     print("🕵️‍♂️ 2단계: 디자인 검증 시작...")
@@ -1068,7 +1067,7 @@ def verify_design():
     if not design_file:
         return jsonify({"error": "디자인 파일이 필요합니다."}), 400
 
-    # ⭐ 파일 포인터 초기화 추가
+    # ⭐ 파일 포인터 초기화
     design_file.seek(0)
     if standard_excel:
         standard_excel.seek(0)
@@ -1076,22 +1075,20 @@ def verify_design():
     # 2. 기준 데이터 로딩 (엑셀 -> JSON)
     if standard_excel:
         try:
-            # dtype=str로 읽어서 모든 셀을 문자열 그대로 유지
             df_dict = pd.read_excel(
                 io.BytesIO(standard_excel.read()),
                 sheet_name=None,
                 engine='openpyxl',
-                dtype=str,  # ✅ 모든 컬럼을 문자열로 읽기
-                keep_default_na=False  # ✅ 빈 칸을 NaN으로 변환하지 않음
+                dtype=str,
+                keep_default_na=False
             )
 
-            first_sheet_name = list(df_dict.keys())[0]
+            first_sheet_name = list(df_dict.keys())
             first_sheet_df = df_dict[first_sheet_name]
             standard_data = {}
 
             if not first_sheet_df.empty:
-                # 원재료명 컬럼 찾기 (단순화)
-                col = first_sheet_df.columns[0]
+                col = first_sheet_df.columns
                 if '원재료명' in first_sheet_df.columns: col = '원재료명'
 
                 ingredients_list = first_sheet_df[col].dropna().astype(str).tolist()
@@ -1102,33 +1099,21 @@ def verify_design():
         except Exception as e:
             return jsonify({"error": f"엑셀 읽기 실패: {str(e)}"}), 400
 
-    # 3. 법령 파일 읽기 (수정됨: 모든 법령 파일 동등하게 로딩)
+    # 3. 법령 파일 읽기
     law_text = ""
-
-    # (1) 현재 폴더의 모든 'law_'로 시작하는 txt 파일 찾기
-    # law_context.txt, law_text_식품위생법.txt 등 모두 포함됨
     all_law_files = glob.glob('law_*.txt')
-
     print(f"📚 법령 파일 로딩 중: {len(all_law_files)}개 발견")
 
     for file_path in all_law_files:
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
-                # 각 법령 파일 내용을 명확히 구분해서 합치기
                 law_text += f"\n\n=== [참고 법령: {file_path}] ===\n{content}\n==========================\n"
         except Exception as e:
             print(f"⚠️ 법령 파일 읽기 실패 ({file_path}): {e}")
 
-    # 4. AI 프롬프트 조립
-    parts = [f"""
-🚨🚨🚨 절대 규칙 🚨🚨🚨
-🚨 절대 규칙: 이미지와 Standard를 정확히 비교하세요!
-- 띄어쓰기 중요: "16 g" ≠ "16g"
-- 숫자 그대로: "221%" → "221%"
-- 오타 그대로: "전반가공품" → "전반가공품"
-- 추측 금지
-    {PROMPT_VERIFY_DESIGN}
+    # 4. 메인 검증 AI 호출 준비
+    parts = 
 
     [참고 법령]
     {law_text[:60000]}
@@ -1140,7 +1125,9 @@ def verify_design():
     if design_file:
         parts.append(process_file_to_part(design_file))
 
-    # 5. AI 호출 및 결과 처리 (여기가 중요)
+    result_json = {} # 결과 담을 변수 초기화
+
+    # 5. AI 호출 및 결과 처리
     try:
         generation_config = {
             "temperature": 0.0,
@@ -1148,22 +1135,16 @@ def verify_design():
             "top_k": 1,
             "candidate_count": 1,
             "max_output_tokens": 32768,
-            "response_mime_type": "application/json"  # JSON 강제
+            "response_mime_type": "application/json"
         }
 
-        # ✅ system_instruction 추가 (더 강력한 제약)
         system_instruction = """
         당신은 정밀한 OCR 및 검증 AI입니다.
-
- 절대 규칙:
-1. 이미지의 글자를 수정/보정/추론하지 마세요
-2. 오타, 띄어쓰기, 특수문자 모두 **정확히 그대로**
-3. 숫자는 소수점 포함 **정확히** (221 ≠ 2.21)
-4. 보이지 않는 내용은 절대 출력 금지
-
-
-검증 시:
-- 글자 단위로 비교 (character-level)
+        절대 규칙:
+        1. 이미지의 글자를 수정/보정/추론하지 마세요
+        2. 오타, 띄어쓰기, 특수문자 모두 정확히 그대로
+        3. 숫자는 소수점 포함 정확히
+        4. 보이지 않는 내용은 절대 출력 금지
         """
 
         model = genai.GenerativeModel(MODEL_NAME, generation_config=generation_config, system_instruction=system_instruction)
@@ -1171,51 +1152,58 @@ def verify_design():
         response = model.generate_content(parts)
         result_text = response.text.strip()
 
-        # [강력한 JSON 파싱 로직] 정규표현식으로 JSON만 추출
+        # JSON 파싱
         json_match = re.search(r"(\{.*\})", result_text, re.DOTALL)
-
         if json_match:
             clean_json = json_match.group(1)
-            # 간단한 쉼표 보정
             clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
-            return jsonify(json.loads(clean_json))
+            result_json = json.loads(clean_json)
         else:
-            # JSON 패턴 못 찾으면 원본에서 시도 (혹시 모르니)
-            clean_json = result_text.replace("``````", "").strip()
-            return jsonify(json.loads(clean_json))
+            clean_json = result_text.replace("```json", "").replace("```
+            result_json = json.loads(clean_json)
 
-        # [핵심 수정] 2. 안전장치: design_ocr_text가 비어있으면 채워넣기
-        # ---------------------------------------------------------
-        if not result_json.get("design_ocr_text"):
-            print("⚠️ 검증 결과에 OCR 텍스트가 누락됨. 별도 OCR 수행 중...")
-            try:
-                design_file.seek(0) # 파일 다시 읽기 위해 초기화
-                ocr_model = genai.GenerativeModel('gemini-1.5-flash') # 가벼운 모델로 빠르게
-                ocr_response = ocr_model.generate_content([PROMPT_EXTRACT_ONLY, process_file_to_part(design_file)])
-                
-                # OCR 결과 파싱
-                ocr_text_raw = ocr_response.text
-                if "```
-                     ocr_json = json.loads(ocr_text_raw.split("```json").split("```
-                     result_json["design_ocr_text"] = ocr_json.get("text", "")
-                else:
-                     # 그냥 텍스트면 통째로 넣음
-                     result_json["design_ocr_text"] = ocr_text_raw.strip()
-                     
-                print(f"✅ 별도 OCR 완료 (길이: {len(result_json['design_ocr_text'])})")
-                
-            except Exception as e:
-                print(f"❌ 별도 OCR 실패: {e}")
-                result_json["design_ocr_text"] = "OCR 텍스트를 불러올 수 없습니다. (서버 오류)"
-
-        return jsonify(result_json)
-    
     except Exception as e:
-        print(f"❌ 검증 오류: {e}")
-        # 상세 에러 로그 출력
-        import traceback
+        print(f"❌ 메인 검증 실패 (일단 진행): {e}")
         traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        result_json = {"score": 0, "issues": [], "design_ocr_text": ""}
+
+    # ---------------------------------------------------------
+    # [안전장치] design_ocr_text가 비어있으면 백업 OCR 실행
+    # ---------------------------------------------------------
+    if not result_json.get("design_ocr_text"):
+        print("⚠️ 검증 결과에 OCR 텍스트가 누락됨. 백업 OCR 수행 중...")
+        try:
+            design_file.seek(0) # 파일 포인터 초기화
+
+            # [중요] 백업 OCR용 설정 (토큰 제한 넉넉하게)
+            ocr_config = {
+                "temperature": 0.0,
+                "max_output_tokens": 32768,
+                "response_mime_type": "application/json"
+            }
+            
+            # [중요] OCR 전용 프롬프트 (텍스트만 추출하라고 지시)
+            PROMPT_EXTRACT_ONLY = """
+            Extract all text from the image exactly as it appears.
+            Do not summarize. Output JSON: { "text": "extracted text..." }
+            """
+            
+            ocr_model = genai.GenerativeModel('gemini-1.5-flash', generation_config=ocr_config)
+            ocr_response = ocr_model.generate_content([PROMPT_EXTRACT_ONLY, process_file_to_part(design_file)])
+            
+            ocr_text_raw = ocr_response.text
+            ocr_data = json.loads(ocr_text_raw) # JSON 모드로 요청했으므로 바로 파싱 가능
+            
+            extracted_text = ocr_data.get("text", "")
+            result_json["design_ocr_text"] = extracted_text
+            print(f"✅ 백업 OCR 완료 (길이: {len(extracted_text)})")
+            
+        except Exception as e:
+            print(f"❌ 백업 OCR 실패: {e}")
+            result_json["design_ocr_text"] = "OCR 텍스트를 불러올 수 없습니다. (서버 오류)"
+
+    return jsonify(result_json)
+
 
 
 @app.route('/api/verify-design-strict', methods=['POST'])
