@@ -4,9 +4,9 @@ requests
 gunicorn
 flask
 flask_cors
+google-generativeai
 python-dotenv
 Pillow
 waitress
 openpyxl
 pandas
-openai
