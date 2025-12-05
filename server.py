@@ -29,7 +29,7 @@ if not CHATGPT_API_KEY:
 client = OpenAI(api_key=CHATGPT_API_KEY)
 
 # OpenAI 모델 (필요 시 아래 목록 로직으로 자동 대체)
-MODEL_NAME = "gpt-4o-mini"  # 속도/비용 최적. 정밀도 우선이면 "gpt-4o"
+MODEL_NAME = "gpt-4o"  # 속도/비용 최적. 정밀도 우선이면 "gpt-4o"
 
 
 def check_available_models():
