@@ -42,7 +42,8 @@ def check_available_models():
         for n in names:
             print(f" - {n}")
 
-        preferred = ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1"]
+        preferred = ["gpt-4o", "gpt-4o-mini", "gpt-4.1-mini", "gpt-4.1"]
+
         for p in preferred:
             if p in names:
                 MODEL_NAME = p
