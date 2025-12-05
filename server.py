@@ -292,68 +292,65 @@ class OpenAICompatModel:
         if generation_config and "temperature" in generation_config:
             self.temperature = generation_config["temperature"]
 
-    def _filepart_to_image_content(part: dict) -> dict | None:
-    """
-    기존: base64로 data_url 생성 → 메시지 포함
-    변경: OpenAI 파일 업로드 후 file_id만 content에 포함
-    """
-    try:
-        data = part.get("data")
-        if not data:
+    def _filepart_to_image_content(self, part: dict) -> dict | None:
+        """
+        기존: base64로 data_url 생성 → 메시지 포함
+        변경: OpenAI 파일 업로드 후 file_id만 content에 포함
+        """
+        try:
+            data = part.get("data")
+            if not data:
+                return None
+
+            uploaded = client.files.create(
+                file=data,
+                purpose="vision"
+            )
+
+            return {
+                "type": "image_url",
+                "image_url": {
+                    "file_id": uploaded.id
+                }
+            }
+
+        except Exception as e:
+            print(f"⚠ 이미지 업로드 실패(_filepart_to_image_content): {e}")
             return None
 
-        # 파일 업로드
-        uploaded = client.files.create(
-            file=data,
-            purpose="vision"
-        )
+    def _pil_to_image_content(self, pil_img) -> dict | None:
+        """
+        기존: PIL → base64 문자열로 변환해서 메시지에 포함
+        변경: PIL → bytes → OpenAI 업로드 후 file_id만 전달
+        """
+        try:
+            buf = io.BytesIO()
+            pil_img.save(buf, format="PNG")
+            buf.seek(0)
+            img_bytes = buf.getvalue()
 
-        return {
-            "type": "image_url",
-            "image_url": {
-                "file_id": uploaded.id
+            uploaded = client.files.create(
+                file=img_bytes,
+                purpose="vision"
+            )
+
+            return {
+                "type": "image_url",
+                "image_url": {
+                    "file_id": uploaded.id
+                }
             }
-        }
 
-    except Exception as e:
-        print(f"⚠ 이미지 업로드 실패(_filepart_to_image_content): {e}")
-        return None
-
-
- def _pil_to_image_content(self, pil_img) -> dict | None:
-    """
-    기존: PIL → base64 문자열로 변환해서 메시지에 포함
-    변경: PIL → bytes → OpenAI 업로드 후 file_id만 전달
-    """
-    try:
-        buf = io.BytesIO()
-        pil_img.save(buf, format="PNG")
-        buf.seek(0)
-        img_bytes = buf.getvalue()
-
-        uploaded = client.files.create(
-            file=img_bytes,
-            purpose="vision"
-        )
-
-        return {
-            "type": "image_url",
-            "image_url": {
-                "file_id": uploaded.id
-            }
-        }
-
-    except Exception as e:
-        print(f"⚠ PIL 이미지 업로드 실패(_pil_to_image_content): {e}")
-        return None
-
-
+        except Exception as e:
+            print(f"⚠ PIL 이미지 업로드 실패(_pil_to_image_content): {e}")
+            return None
 
     def generate_content(self, parts: list) -> OpenAICompatResponse:
         """
         parts 요소:
           - 문자열(str)
           - {"text": "..."}
+
           - {"mime_type": "...", "data": b"..."} (이미지/파일)
           - PIL.Image
         """
@@ -362,14 +359,17 @@ class OpenAICompatModel:
             if isinstance(p, str):
                 content.append({"type": "text", "text": p})
                 continue
+
             if isinstance(p, dict) and p.get("text"):
                 content.append({"type": "text", "text": p["text"]})
                 continue
+
             if isinstance(p, dict) and p.get("mime_type") and p.get("data"):
                 imgc = self._filepart_to_image_content(p)
                 if imgc:
                     content.append(imgc)
                 continue
+
             try:
                 from PIL.Image import Image as PILImage
                 if isinstance(p, PILImage):
@@ -385,8 +385,10 @@ class OpenAICompatModel:
             temperature=self.temperature,
             messages=[{"role": "user", "content": content}],
         )
+
         text = (resp.choices[0].message.content or "").strip()
         return OpenAICompatResponse(text)
+
 
 
 # --- 파일 처리 함수들 ---
