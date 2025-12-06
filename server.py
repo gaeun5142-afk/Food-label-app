@@ -12,6 +12,37 @@ import PIL.ImageEnhance
 import re
 import unicodedata
 
+# ------------------ Gemini 응답 안전 추출 함수 ------------------
+def get_safe_response_text(response):
+    """
+    Gemini 응답에서 text를 안전하게 꺼내는 헬퍼.
+    finish_reason이 STOP(1)이 아닐 경우 예외를 발생시켜 상위 로직에서 후처리하도록 유도.
+    """
+    if not getattr(response, "candidates", None):
+        raise RuntimeError("모델 응답에 candidates가 없습니다. (빈 응답)")
+
+    cand = response.candidates[0]
+
+    # finish_reason 값 참고:
+    # 0 unspecified, 1 STOP(정상 종료), 2 MAX_TOKENS, 3 SAFETY, 4 RECITATION, 5 OTHER
+    if cand.finish_reason != 1:  # 정상 종료가 아닐 경우
+        print("⚠️ 비정상 종료 발생 (finish_reason):", cand.finish_reason)
+        raise RuntimeError(f"finish_reason={cand.finish_reason} (MAX tokens / Safety 등)")
+
+    content = getattr(cand, "content", None)
+    parts = getattr(content, "parts", None) if content else None
+    if not parts:
+        raise RuntimeError("content.parts가 비어 있습니다 (텍스트 없음).")
+
+    texts = []
+    for p in parts:
+        if hasattr(p, "text") and p.text:
+            texts.append(p.text)
+
+    return "".join(texts).strip()
+# ----------------------------------------------------------------
+
+
 # --- 설정 및 초기화 ---
 load_dotenv()
 
@@ -1150,7 +1181,7 @@ def verify_design():
         model = genai.GenerativeModel(MODEL_NAME, generation_config=generation_config, system_instruction=system_instruction)
 
         response = model.generate_content(parts)
-        result_text = response.text.strip()
+        result_text = get_safe_response_text(response)
 
         # JSON 파싱
         json_match = re.search(r"(\{.*\})", result_text, re.DOTALL)
