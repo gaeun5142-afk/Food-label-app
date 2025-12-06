@@ -178,6 +178,8 @@
             const res = await fetch('/api/upload-qa', { method: 'POST', body: formData });
             const data = await res.json();
             
+            console.log(data.design_ocr_text);
+            
             if (data.error) throw new Error(data.error);
             
             document.getElementById('qaResult').style.display = 'block';
@@ -464,9 +466,11 @@
         document.getElementById('loadingOverlay').style.display = 'block';
 
         try {
-            const res = await fetch('/api/verify-design', ...).then(r => r.json());
-            console.log(res.design_ocr_text);
-
+            const res = await fetch('/api/verify-design', { method: 'POST', body: formData });
+            const data = await res.json();
+            
+            console.log(data.design_ocr_text);
+            
             if (data.error) throw new Error(data.error);
 
             displayReport(data);
