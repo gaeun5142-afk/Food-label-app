@@ -743,13 +743,14 @@ def extract_ingredient_info_from_image(image_file):
         response = model.generate_content(parts)
         
         result_text = response.text.strip()
+        result_text = strip_code_fence(result_text)
         # JSON 파싱
-        if result_text.startswith("```json"):
-            result_text = result_text[7:-3]
-        elif result_text.startswith("```"):
-            result_text = result_text.split("```")[1].strip()
-            if result_text.startswith("json"):
-                result_text = result_text[4:].strip()
+        try:
+            return json.loads(result_text)
+        except json.JSONDecodeError as e:
+            print("원재료 정보 JSON 파싱 실패:", e)
+            print("응답 텍스트 일부:", result_text[:500])
+        return None
         
         return json.loads(result_text)
     except json.JSONDecodeError as e:
@@ -1266,13 +1267,14 @@ def verify_design_strict():
         response = model.generate_content(parts)
 
         # ✅ 정확한 코드
-        result_text = response.text.strip()
-        if result_text.startswith("```json"):
-            result_text = result_text[7:-3]
-        elif result_text.startswith("```json"):
-            result_text = result_text[3:-3]
-
-        design_ocr = json.loads(result_text)
+        result_text = get_safe_response_text(response)
+        result_text = strip_code_fence(result_text)
+        try:
+            design_ocr = json.loads(result_text)
+        except json.JSONDecodeError as e:
+            print("❌ design_ocr JSON 파싱 실패:", e)
+            print("↪ 응답 일부:", result_text[:500])  # 앞 500자만 로그
+            raise
 
         # 2. Python으로 정확한 비교 (AI 없이!)
         all_issues = []
