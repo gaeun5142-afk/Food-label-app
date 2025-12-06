@@ -1188,6 +1188,31 @@ def verify_design():
             print(f"⚠️ 법령 파일 읽기 실패 ({file_path}): {e}")
 
     # 4. AI 프롬프트 조립
+
+    # ⭐ 먼저 OCR을 강제로 따로 수행하여 design_ocr_text 확보
+try:
+    ocr_parts = [
+        PROMPT_EXTRACT_RAW_TEXT,
+        process_file_to_part(design_file)
+    ]
+    ocr_model = genai.GenerativeModel(MODEL_NAME, generation_config={
+        "temperature": 0.0,
+        "top_k": 1,
+        "response_mime_type": "application/json"
+    })
+    ocr_response = ocr_model.generate_content(ocr_parts)
+    ocr_text = ocr_response.text.strip()
+
+    if ocr_text.startswith("```json"):
+        ocr_text = ocr_text[7:-3]
+
+    ocr_json = json.loads(ocr_text)
+    forced_design_text = ocr_json.get("raw_text", "")
+
+except Exception as e:
+    print("OCR 강제 추출 실패:", e)
+    forced_design_text = ""
+
     parts = [f"""
 🚨🚨🚨 절대 규칙 🚨🚨🚨
 🚨 절대 규칙: 이미지와 Standard를 정확히 비교하세요!
@@ -1204,6 +1229,9 @@ def verify_design():
     {standard_json}
     """]
 
+    [디자인 OCR (강제 추출 결과)]
+    {forced_design_text}
+    """]
     if design_file:
         parts.append(process_file_to_part(design_file))
 
