@@ -1121,14 +1121,14 @@ def verify_design():
             df_dict = pd.read_excel(
                 io.BytesIO(standard_excel.read()),
                 sheet_name=None,
-                engine='openpyxl',
+                engine="openpyxl",
                 dtype=str,
-                keep_default_na=False
+                keep_default_na=False,
             )
 
-            # 🔹 시트 이름 목록에서 첫 번째 시트 선택
+            # 🔹 시트 이름 목록 중 첫 번째 시트 선택
             sheet_names = list(df_dict.keys())          # 예: ['제품정보', '원재료명', ...]
-            first_sheet_name = sheet_names[0]           # 첫 번째 시트 이름 (문자열)
+            first_sheet_name = sheet_names[0]           # 문자열 하나
             first_sheet_df = df_dict[first_sheet_name]  # DataFrame 하나
 
             standard_data = {}
@@ -1138,8 +1138,8 @@ def verify_design():
                 col = first_sheet_df.columns[0]
 
                 # '원재료명' 컬럼이 있으면 그걸 우선 사용
-                if '원재료명' in first_sheet_df.columns:
-                    col = '원재료명'
+                if "원재료명" in first_sheet_df.columns:
+                    col = "원재료명"
 
                 ingredients_list = (
                     first_sheet_df[col]
