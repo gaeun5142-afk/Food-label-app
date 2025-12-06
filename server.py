@@ -40,6 +40,27 @@ def get_safe_response_text(response):
             texts.append(p.text)
 
     return "".join(texts).strip()
+
+
+def strip_code_fence(text: str) -> str:
+    if not isinstance(text, str):
+        text = str(text)
+
+    text = text.strip()
+    if not text.startswith("```"):
+        return text
+
+    lines = text.splitlines()
+
+    # 첫 줄 제거 (``` 또는 ```json 등)
+    if lines and lines[0].strip().startswith("```"):
+        lines = lines[1:]
+
+    # 마지막 줄 제거
+    if lines and lines[-1].strip().startswith("```"):
+        lines = lines[:-1]
+
+    return "\n".join(lines).strip()
 # ----------------------------------------------------------------
 
 
@@ -742,8 +763,11 @@ def extract_ingredient_info_from_image(image_file):
         parts = [PROMPT_EXTRACT_INGREDIENT_INFO, img_pil]
         response = model.generate_content(parts)
         
-        result_text = response.text.strip()
+        
+        result_text = get_safe_response_text(response)
         result_text = strip_code_fence(result_text)
+        data = json.loads(result_text)
+        
         # JSON 파싱
         try:
             return json.loads(result_text)
@@ -921,7 +945,10 @@ def create_standard():
         response = model.generate_content(parts)
 
         # JSON 파싱
-        result_text = response.text.strip()
+        result_text = get_safe_response_text(response)
+        result_text = strip_code_fence(result_text)
+        
+        data = json.loads(result_text)
         
         # JSON 코드 블록 제거
         if result_text.startswith("```json"):
@@ -1376,7 +1403,10 @@ def upload_qa():
 
 
         # JSON 파싱
-        result_text = response.text.strip()
+        result_text = get_safe_response_text(response)
+        result_text = strip_code_fence(result_text)
+        
+        data = json.loads(result_text)
         
         # JSON 코드 블록 제거
         if result_text.startswith("```json"):
