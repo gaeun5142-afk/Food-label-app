@@ -144,7 +144,7 @@ def ocr_with_voting(image_file, num_runs=5):
                 continue
 
             extracted_text = ocr_result.get('raw_text', '')
-
+            results.append(extracted_text)   # ← 이 줄 추가!
             print(f"  {i + 1}/{num_runs} 완료: {len(extracted_text)}자")
 
         except Exception as e:
@@ -1126,21 +1126,37 @@ def verify_design():
                 keep_default_na=False
             )
 
-            first_sheet_name = list(df_dict.keys())
-            first_sheet_name = sheet_names[0]
-            first_sheet_df = df_dict[first_sheet_name]
-            
-            standard_data = {}
-    
-            if not first_sheet_df.empty:
-                col = first_sheet_df.columns
-                if '원재료명' in first_sheet_df.columns: col = '원재료명'
+            # 🔹 시트 이름 목록에서 첫 번째 시트 선택
+            sheet_names = list(df_dict.keys())          # 예: ['제품정보', '원재료명', ...]
+            first_sheet_name = sheet_names[0]           # 첫 번째 시트 이름 (문자열)
+            first_sheet_df = df_dict[first_sheet_name]  # DataFrame 하나
 
-                ingredients_list = first_sheet_df[col].dropna().astype(str).tolist()
-                standard_data = {'ingredients': {'structured_list': ingredients_list,
-                                                 'continuous_text': ', '.join(ingredients_list)}}
+            standard_data = {}
+
+            if not first_sheet_df.empty:
+                # 기본은 첫 번째 컬럼 사용
+                col = first_sheet_df.columns[0]
+
+                # '원재료명' 컬럼이 있으면 그걸 우선 사용
+                if '원재료명' in first_sheet_df.columns:
+                    col = '원재료명'
+
+                ingredients_list = (
+                    first_sheet_df[col]
+                    .dropna()
+                    .astype(str)
+                    .tolist()
+                )
+
+                standard_data = {
+                    "ingredients": {
+                        "structured_list": ingredients_list,
+                        "continuous_text": ", ".join(ingredients_list),
+                    }
+                }
 
             standard_json = json.dumps(standard_data, ensure_ascii=False)
+
         except Exception as e:
             return jsonify({"error": f"엑셀 읽기 실패: {str(e)}"}), 400
 
