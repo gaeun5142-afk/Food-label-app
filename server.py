@@ -79,10 +79,11 @@ def ocr_with_voting(image_file, num_runs=5):
                 print(f"  ⚠️ {i+1}번째 OCR: 토큰 제한 초과, 재시도 중...")
                 continue
 
+
             result_text = response.text.strip()
 
             # JSON 파싱
-            if result_text.startswith("```json"):
+            if result_text.startswith("```"):
                 result_text = result_text[7:-3]
             elif result_text.startswith("```"):
                 result_text = result_text[3:-3]
@@ -161,7 +162,7 @@ def check_available_models():
                 available_models.append(model_name)
                 print(f"   - {model_name}")
         
-        # Flash 모델 우선 선택
+        # python server.pyFlash 모델 우선 선택
         for model in available_models:
             if 'flash' in model.lower():
                 MODEL_NAME = model
@@ -1117,41 +1118,6 @@ def verify_design():
         except Exception as e:
             print(f"⚠️ 법령 파일 읽기 실패 ({file_path}): {e}")
 
-    # ⭐⭐ 여기서 먼저 OCR을 따로 한 번 돌려서 raw_text 확보 ⭐⭐
-    design_ocr_text = ""
-    try:
-        ocr_parts = [
-            PROMPT_EXTRACT_RAW_TEXT,
-            process_file_to_part(design_file)
-        ]
-        ocr_model = genai.GenerativeModel(
-            MODEL_NAME,
-            generation_config={
-                "temperature": 0.0,
-                "top_k": 1,
-                "response_mime_type": "application/json",
-                "max_output_tokens": 8192
-            }
-        )
-        ocr_response = ocr_model.generate_content(ocr_parts)
-        ocr_result_text = ocr_response.text.strip()
-
-        if ocr_result_text.startswith("```json"):
-            ocr_result_text = ocr_result_text[7:-3]
-        elif ocr_result_text.startswith("```"):
-            ocr_result_text = ocr_result_text[3:-3]
-
-        try:
-            ocr_json = json.loads(ocr_result_text)
-            design_ocr_text = ocr_json.get("raw_text", "")
-        except json.JSONDecodeError as e:
-            print(f"⚠️ OCR JSON 파싱 실패: {e}")
-            print(f"OCR 응답 일부: {ocr_result_text[:200]}...")
-            design_ocr_text = ocr_result_text  # 최악의 경우 그냥 문자열로라도 남김
-    except Exception as e:
-        print(f"⚠️ OCR 수행 중 오류: {e}")
-        design_ocr_text = ""
-
     # 4. AI 프롬프트 조립
     parts = [f"""
 🚨🚨🚨 절대 규칙 🚨🚨🚨
@@ -1167,9 +1133,6 @@ def verify_design():
 
     [기준 데이터]
     {standard_json}
-
-    [OCR_RAW_TEXT]
-    {design_ocr_text}
     """]
 
     if design_file:
@@ -1213,26 +1176,18 @@ def verify_design():
             clean_json = json_match.group(1)
             # 간단한 쉼표 보정
             clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
-            result = json.loads(clean_json)
+            return jsonify(json.loads(clean_json))
         else:
             # JSON 패턴 못 찾으면 원본에서 시도 (혹시 모르니)
             clean_json = result_text.replace("``````", "").strip()
-            result = json.loads(clean_json)
-
-        # 🔥 여기서 항상 OCR 결과를 같이 내려보냄
-        result["design_ocr_text"] = design_ocr_text
-
-        return jsonify(result)
+            return jsonify(json.loads(clean_json))
 
     except Exception as e:
         print(f"❌ 검증 오류: {e}")
         # 상세 에러 로그 출력
         import traceback
         traceback.print_exc()
-        return jsonify({
-            "error": str(e),
-            "design_ocr_text": design_ocr_text  # 실패해도 OCR은 같이 보내줌
-        }), 500
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/verify-design-strict', methods=['POST'])
@@ -1267,7 +1222,7 @@ def verify_design_strict():
         result_text = response.text.strip()
         if result_text.startswith("```json"):
             result_text = result_text[7:-3]
-        elif result_text.startswith("```"):
+        elif result_text.startswith("```json"):
             result_text = result_text[3:-3]
 
         design_ocr = json.loads(result_text)
@@ -1278,8 +1233,6 @@ def verify_design_strict():
         # 원재료명 비교
         if 'ingredients' in standard_data:
             std_text = standard_data['ingredients']['continuous_text']
-        else:
-            std_text = ""
         des_text = design_ocr.get('raw_text', '')
         issues = compare_texts_strict(std_text, des_text)  # 3-1에서 추가한 함수 사용
 
