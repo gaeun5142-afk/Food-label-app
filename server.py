@@ -1135,21 +1135,20 @@ def verify_design():
     if not design_file:
         return jsonify({"error": "디자인 파일이 필요합니다."}), 400
 
-    # ⭐ 파일 포인터 초기화 추가
+    # 파일 포인터 초기화
     design_file.seek(0)
     if standard_excel:
         standard_excel.seek(0)
 
-    # 2. 기준 데이터 로딩 (엑셀 -> JSON)
+    # 2. 기준 데이터 로딩 (엑셀 → JSON 변환)
     if standard_excel:
         try:
-            # dtype=str로 읽어서 모든 셀을 문자열 그대로 유지
             df_dict = pd.read_excel(
                 io.BytesIO(standard_excel.read()),
                 sheet_name=None,
                 engine='openpyxl',
-                dtype=str,  # ✅ 모든 컬럼을 문자열로 읽기
-                keep_default_na=False  # ✅ 빈 칸을 NaN으로 변환하지 않음
+                dtype=str,
+                keep_default_na=False
             )
 
             first_sheet_name = list(df_dict.keys())[0]
@@ -1157,63 +1156,62 @@ def verify_design():
             standard_data = {}
 
             if not first_sheet_df.empty:
-                # 원재료명 컬럼 찾기 (단순화)
                 col = first_sheet_df.columns[0]
-                if '원재료명' in first_sheet_df.columns: col = '원재료명'
-
+                if '원재료명' in first_sheet_df.columns:
+                    col = '원재료명'
                 ingredients_list = first_sheet_df[col].dropna().astype(str).tolist()
-                standard_data = {'ingredients': {'structured_list': ingredients_list,
-                                                 'continuous_text': ', '.join(ingredients_list)}}
+                standard_data = {
+                    'ingredients': {
+                        'structured_list': ingredients_list,
+                        'continuous_text': ', '.join(ingredients_list)
+                    }
+                }
 
             standard_json = json.dumps(standard_data, ensure_ascii=False)
+
         except Exception as e:
             return jsonify({"error": f"엑셀 읽기 실패: {str(e)}"}), 400
 
-    # 3. 법령 파일 읽기 (수정됨: 모든 법령 파일 동등하게 로딩)
+    # 3. 법령 텍스트 로딩
     law_text = ""
-
-    # (1) 현재 폴더의 모든 'law_'로 시작하는 txt 파일 찾기
-    # law_context.txt, law_text_식품위생법.txt 등 모두 포함됨
     all_law_files = glob.glob('law_*.txt')
-
     print(f"📚 법령 파일 로딩 중: {len(all_law_files)}개 발견")
 
     for file_path in all_law_files:
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
-                # 각 법령 파일 내용을 명확히 구분해서 합치기
                 law_text += f"\n\n=== [참고 법령: {file_path}] ===\n{content}\n==========================\n"
         except Exception as e:
             print(f"⚠️ 법령 파일 읽기 실패 ({file_path}): {e}")
 
- # ⭐ 4. AI 프롬프트 조립 전에 강제 OCR 수행
-try:
-    ocr_parts = [
-        PROMPT_EXTRACT_RAW_TEXT,
-        process_file_to_part(design_file)
-    ]
-    ocr_model = genai.GenerativeModel(MODEL_NAME, generation_config={
-        "temperature": 0.0,
-        "top_k": 1,
-        "response_mime_type": "application/json"
-    })
-    ocr_response = ocr_model.generate_content(ocr_parts)
-    ocr_text = ocr_response.text.strip()
+    # 4. ⭐ 강제 OCR 실행 (design_ocr_text 확보)
+    try:
+        ocr_parts = [
+            PROMPT_EXTRACT_RAW_TEXT,
+            process_file_to_part(design_file)
+        ]
+        ocr_model = genai.GenerativeModel(MODEL_NAME, generation_config={
+            "temperature": 0.0,
+            "top_k": 1,
+            "response_mime_type": "application/json"
+        })
 
-    if ocr_text.startswith("```json"):
-        ocr_text = ocr_text[7:-3]
+        ocr_response = ocr_model.generate_content(ocr_parts)
+        ocr_text = ocr_response.text.strip()
 
-    ocr_json = json.loads(ocr_text)
-    forced_design_text = ocr_json.get("raw_text", "")
+        if ocr_text.startswith("```json"):
+            ocr_text = ocr_text[7:-3]
 
-except Exception as e:
-    print("OCR 강제 추출 실패:", e)
-    forced_design_text = ""
+        ocr_json = json.loads(ocr_text)
+        forced_design_text = ocr_json.get("raw_text", "")
 
+    except Exception as e:
+        print("OCR 강제 추출 실패:", e)
+        forced_design_text = ""
 
-# ⭐ 4. AI 프롬프트 조립 — 무조건 try/except 밖에서 실행!
-parts = [f"""
+    # 5. ⭐ AI 프롬프트 조립
+    parts = [f"""
 🚨🚨🚨 절대 규칙 🚨🚨🚨
 🚨 절대 규칙: 이미지와 Standard를 정확히 비교하세요!
 - 띄어쓰기 중요: "16 g" ≠ "16g"
@@ -1233,11 +1231,10 @@ parts = [f"""
 {forced_design_text}
 """]
 
-    
-    if design_file:
-        parts.append(process_file_to_part(design_file))
+    # 실제 이미지도 AI에게 전달
+    parts.append(process_file_to_part(design_file))
 
-    # 5. AI 호출 및 결과 처리 (여기가 중요)
+    # 6. AI 호출
     try:
         generation_config = {
             "temperature": 0.0,
@@ -1245,72 +1242,51 @@ parts = [f"""
             "top_k": 1,
             "candidate_count": 1,
             "max_output_tokens": 32768,
-            "response_mime_type": "application/json"  # JSON 강제
+            "response_mime_type": "application/json"
         }
 
-        # ✅ system_instruction 추가 (더 강력한 제약)
         system_instruction = """
         당신은 정밀한 OCR 및 검증 AI입니다.
-
- 절대 규칙:
-1. 이미지의 글자를 수정/보정/추론하지 마세요
-2. 오타, 띄어쓰기, 특수문자 모두 **정확히 그대로**
-3. 숫자는 소수점 포함 **정확히** (221 ≠ 2.21)
-4. 보이지 않는 내용은 절대 출력 금지
-
-
-검증 시:
-- 글자 단위로 비교 (character-level)
+        이미지의 모든 글자를 똑같이 비교하고 문자 1개라도 다르면 오류로 기록하세요.
         """
 
-        model = genai.GenerativeModel(MODEL_NAME, generation_config=generation_config, system_instruction=system_instruction)
+        model = genai.GenerativeModel(
+            MODEL_NAME,
+            generation_config=generation_config,
+            system_instruction=system_instruction
+        )
 
         response = model.generate_content(parts)
         result_text = response.text.strip()
 
-        # [강력한 JSON 파싱 로직] 정규표현식으로 JSON만 추출
+        # JSON 추출
         json_match = re.search(r"(\{.*\})", result_text, re.DOTALL)
 
         if json_match:
-            if json_match:
-                clean_json = json_match.group(1)
-                clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
-    
-                # ⭐ JSON 객체로 로드
-                json_obj = json.loads(clean_json)
-
-                # ⭐ OCR 텍스트 및 issues 가져오기
-                design_text = json_obj.get("design_ocr_text", "")
-                issues = json_obj.get("issues", [])
-
-                # ⭐ position 자동 생성
-                issues = add_issue_positions(issues, design_text)
-
-                # ⭐ JSON에 덮어쓰기
-                json_obj["issues"] = issues
-
-                return jsonify(json_obj)
-
-        else:
-            clean_json = result_text.replace("``````", "").strip()
+            clean_json = json_match.group(1)
+            clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
 
             json_obj = json.loads(clean_json)
 
-            design_text = json_obj.get("design_ocr_text", "")
-            issues = json_obj.get("issues", [])
+        else:
+            clean_json = result_text.replace("```", "").strip()
+            json_obj = json.loads(clean_json)
 
-            issues = add_issue_positions(issues, design_text)
-            json_obj["issues"] = issues
+        # 7. 하이라이트 위치 계산 (position 추가)
+        design_text = json_obj.get("design_ocr_text", "")
+        issues = json_obj.get("issues", [])
 
-            return jsonify(json_obj)
+        issues = add_issue_positions(issues, design_text)
+        json_obj["issues"] = issues
 
+        return jsonify(json_obj)
 
     except Exception as e:
         print(f"❌ 검증 오류: {e}")
-        # 상세 에러 로그 출력
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
 
 
 @app.route('/api/verify-design-strict', methods=['POST'])
