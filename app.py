@@ -12,7 +12,7 @@ SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ===== Flask 백엔드 주소 =====
-FLASK_API_URL = "https://food-label-app-4.onrender.com"
+FLASK_API_URL = "https://food-label-app.onrender.com"
 
 
 # ===== 유틸: 위반 문구 정리 =====
