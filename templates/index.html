@@ -464,7 +464,7 @@
         document.getElementById('loadingOverlay').style.display = 'block';
 
         try {
-            const res = await fetch('/api/verify-design', { method: 'POST', body: formData });
+            const res = await fetch('/api/verify-design-strict', { method: 'POST', body: formData });
             const data = await res.json();
 
             if (data.error) throw new Error(data.error);
