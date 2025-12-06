@@ -1223,14 +1223,6 @@ def verify_design():
             clean_json = result_text.replace("```json", "").replace("```", "")
             clean_json = clean_json.strip()
             result_json = json.loads(clean_json)
-        # ===== HTML 태그 sanitize 처리 =====
-        if "law_compliance" in result_json and "violations" in result_json["law_compliance"]:
-            safe = []
-            for v in result_json["law_compliance"]["violations"]:
-                safe.append(
-                    v.replace("<", "&lt;").replace(">", "&gt;")
-                )
-            result_json["law_compliance"]["violations"] = safe
 
     except Exception as e:
         print(f"❌ 메인 검증 실패 (일단 진행): {e}")
