@@ -117,7 +117,7 @@ def ocr_with_voting(image_file, num_runs=5):
     return most_common_text
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 # API 키 설정
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
