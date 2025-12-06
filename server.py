@@ -11,6 +11,7 @@ import PIL.Image
 import PIL.ImageEnhance
 import re
 import unicodedata
+import traceback
 
 # ------------------ Gemini 응답 안전 추출 함수 ------------------
 def get_safe_response_text(response):
@@ -131,18 +132,18 @@ def ocr_with_voting(image_file, num_runs=5):
                 print(f"  ⚠️ {i+1}번째 OCR: 토큰 제한 초과, 재시도 중...")
                 continue
 
-
-            result_text = response.text.strip()
+            result_text = get_safe_response_text(response)
+            result_text = strip_code_fence(result_text)
 
             # JSON 파싱
-            if result_text.startswith("```"):
-                result_text = result_text[7:-3]
-            elif result_text.startswith("```"):
-                result_text = result_text[3:-3]
+            try:
+                ocr_result = json.loads(result_text)
+            except json.JSONDecodeError as e:
+                print(f"  ⚠️ {i+1}번째 OCR JSON 파싱 실패: {e}")
+                print("     응답 일부:", result_text[:300])
+                continue
 
-            ocr_result = json.loads(result_text)
             extracted_text = ocr_result.get('raw_text', '')
-            results.append(extracted_text)
 
             print(f"  {i + 1}/{num_runs} 완료: {len(extracted_text)}자")
 
@@ -766,7 +767,6 @@ def extract_ingredient_info_from_image(image_file):
         
         result_text = get_safe_response_text(response)
         result_text = strip_code_fence(result_text)
-        data = json.loads(result_text)
         
         # JSON 파싱
         try:
@@ -774,7 +774,7 @@ def extract_ingredient_info_from_image(image_file):
         except json.JSONDecodeError as e:
             print("원재료 정보 JSON 파싱 실패:", e)
             print("응답 텍스트 일부:", result_text[:500])
-        return None
+            return None
         
         return json.loads(result_text)
     except json.JSONDecodeError as e:
@@ -1172,19 +1172,19 @@ def verify_design():
             print(f"⚠️ 법령 파일 읽기 실패 ({file_path}): {e}")
 
     # 4. 메인 검증 AI 호출 준비
-    parts = 
-
+        prompt = f"""
+    {PROMPT_VERIFY_DESIGN}
+    
     [참고 법령]
     {law_text[:60000]}
-
+    
     [기준 데이터]
     {standard_json}
-    """]
-
-    if design_file:
-        parts.append(process_file_to_part(design_file))
-
-    result_json = {} # 결과 담을 변수 초기화
+    """
+        parts = [prompt]
+    
+        if design_file:
+            parts.append(process_file_to_part(design_file))
 
     # 5. AI 호출 및 결과 처리
     try:
@@ -1218,7 +1218,8 @@ def verify_design():
             clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
             result_json = json.loads(clean_json)
         else:
-            clean_json = result_text.replace("```json", "").replace("```
+            clean_json = result_text.replace("```json", "").replace("```", "")
+            clean_json = clean_json.strip()
             result_json = json.loads(clean_json)
 
     except Exception as e:
@@ -1250,10 +1251,17 @@ def verify_design():
             ocr_model = genai.GenerativeModel('gemini-1.5-flash', generation_config=ocr_config)
             ocr_response = ocr_model.generate_content([PROMPT_EXTRACT_ONLY, process_file_to_part(design_file)])
             
-            ocr_text_raw = ocr_response.text
-            ocr_data = json.loads(ocr_text_raw) # JSON 모드로 요청했으므로 바로 파싱 가능
+            ocr_text_raw = get_safe_response_text(ocr_response)
+            ocr_text_raw = strip_code_fence(ocr_text_raw)
             
-            extracted_text = ocr_data.get("text", "")
+            try:
+                ocr_data = json.loads(ocr_text_raw)
+            except json.JSONDecodeError as e:
+                print("❌ 백업 OCR JSON 파싱 실패:", e)
+                print("↪ 응답 일부:", ocr_text_raw[:300])
+                raise
+            
+            extracted_text = ocr_data.get("text") or ocr_data.get("raw_text", "")
             result_json["design_ocr_text"] = extracted_text
             print(f"✅ 백업 OCR 완료 (길이: {len(extracted_text)})")
             
