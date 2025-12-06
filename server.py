@@ -15,6 +15,40 @@ import unicodedata
 # --- 설정 및 초기화 ---
 load_dotenv()
 
+def add_issue_positions(issues, full_text: str):
+    """
+    issues 리스트에 'position' 키를 채워넣는 함수.
+    full_text: OCR로 뽑은 전체 텍스트 (design_ocr_text)
+    """
+    if not full_text or not issues:
+        return issues
+
+    text = full_text  # 그대로 쓰거나 .lower()로 바꿀 수도 있음
+
+    for issue in issues:
+        # 이미 position이 있으면 건너뛰기
+        if isinstance(issue.get("position"), int):
+            continue
+
+        actual = (issue.get("actual") or "").strip()
+        expected = (issue.get("expected") or "").strip()
+
+        pos = -1
+
+        # 1) 우선 actual(실제 표시된 문자열) 위치 찾기
+        if actual:
+            pos = text.find(actual)
+
+        # 2) 못 찾으면 expected(정답)로라도 찾아보기 (선택)
+        if pos == -1 and expected:
+            pos = text.find(expected)
+
+        # 3) 그래도 못 찾으면 그냥 넘어감 (이 이슈는 하이라이트 X)
+        if pos != -1:
+            issue["position"] = pos
+
+    return issues
+
 def normalize_text_strict(text):
     """엄격한 비교용 정규화 (공백/특수문자 유지)"""
     if not isinstance(text, str):
@@ -46,6 +80,41 @@ def compare_texts_strict(standard_text, design_text):
             })
 
     return issues
+
+def add_issue_positions(issues, full_text: str):
+    """
+    issues 리스트에 'position' 키를 채워넣는 함수.
+    full_text: OCR로 뽑은 전체 텍스트 (design_ocr_text)
+    """
+    if not full_text or not issues:
+        return issues
+
+    text = full_text  # 그대로 쓰거나 .lower()로 바꿀 수도 있음
+
+    for issue in issues:
+        # 이미 position이 있으면 건너뛰기
+        if isinstance(issue.get("position"), int):
+            continue
+
+        actual = (issue.get("actual") or "").strip()
+        expected = (issue.get("expected") or "").strip()
+
+        pos = -1
+
+        # 1) 우선 actual(실제 표시된 문자열) 위치 찾기
+        if actual:
+            pos = text.find(actual)
+
+        # 2) 못 찾으면 expected(정답)로라도 찾아보기 (선택)
+        if pos == -1 and expected:
+            pos = text.find(expected)
+
+        # 3) 그래도 못 찾으면 그냥 넘어감 (이 이슈는 하이라이트 X)
+        if pos != -1:
+            issue["position"] = pos
+
+    return issues
+
 
 #5번
 def ocr_with_voting(image_file, num_runs=5):
