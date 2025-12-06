@@ -464,8 +464,8 @@
         document.getElementById('loadingOverlay').style.display = 'block';
 
         try {
-            const res = await fetch('/api/verify-design', { method: 'POST', body: formData });
-            const data = await res.json();
+            const res = await fetch('/api/verify-design', ...).then(r => r.json());
+            console.log(res.design_ocr_text);
 
             if (data.error) throw new Error(data.error);
 
