@@ -991,313 +991,111 @@ def create_standard():
 
 
 # 기준 데이터 엑셀 파일 다운로드
-@app.route('/api/download-standard-excel', methods=['POST'])
-def download_standard_excel():
-    """기준 데이터를 엑셀 파일로 다운로드"""
-    try:
-        data = request.get_json()
-        if not data:
-            return jsonify({"error": "기준 데이터가 없습니다."}), 400
-        
-        excel_buffer = create_standard_excel(data)
-        product_name = data.get('product_info', {}).get('product_name', '기준데이터') or data.get('product_name', '기준데이터')
-        filename = f"{product_name}_기준데이터.xlsx"
-        
-        return send_file(
-            excel_buffer,
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            as_attachment=True,
-            download_name=filename
-        )
-    except Exception as e:
-        print(f"❌ 엑셀 다운로드 오류: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-# 엑셀 파일에서 기준 데이터 읽기
 @app.route('/api/read-standard-excel', methods=['POST'])
 def read_standard_excel():
-    """엑셀 파일에서 기준 데이터를 읽어옴 (표시사항 기초자료 형식 + 기존 형식 둘 다 지원)"""
+    """엑셀 파일에서 기준 데이터를 읽어옴"""
     try:
         excel_file = request.files.get('excel_file')
         if not excel_file:
             return jsonify({"error": "엑셀 파일이 필요합니다."}), 400
-
-        # 모든 시트 로드 (기존 다중 시트 형식 대비용)
+        
+        # 🔥 핵심: dtype=str로 모든 값을 문자열 그대로 읽기
         df_dict = pd.read_excel(
             io.BytesIO(excel_file.read()),
             sheet_name=None,
             engine='openpyxl',
-            dtype=str,
+            dtype=str,        # 모든 컬럼을 문자열로
             keep_default_na=False,
             na_filter=False
         )
 
-        # 문자열 강제
+        # 데이터 처리 시 strip() 안 함 (공백 유지)
         for sheet_name, df in df_dict.items():
             df_dict[sheet_name] = df.astype(str)
 
         result = {}
-
-        # ✅ 1) 기존 V2 형식 (여러 시트: 제품정보, 원재료명, 알레르기정보, …) 먼저 지원
-        if '제품정보' in df_dict or '원재료명' in df_dict or '영양정보' in df_dict:
-            # --- 제품정보 시트 ---
-            if '제품정보' in df_dict:
-                product_info = df_dict['제품정보'].to_dict('records')[0]
-                result['product_info'] = product_info
-
-            # --- 원재료명 시트 ---
-            if '원재료명' in df_dict:
-                ingredients_list = df_dict['원재료명']['원재료명'].dropna().tolist()
-                result.setdefault('ingredients', {})
-                result['ingredients']['structured_list'] = ingredients_list
-                result['ingredients']['continuous_text'] = ', '.join(ingredients_list)
-
-            # --- 연속텍스트 시트 ---
-            if '원재료명_연속텍스트' in df_dict:
-                continuous_text = df_dict['원재료명_연속텍스트']['원재료명_연속텍스트'].iloc[0]
-                result.setdefault('ingredients', {})
-                result['ingredients']['continuous_text'] = continuous_text
-                if 'structured_list' not in result['ingredients']:
-                    result['ingredients']['structured_list'] = continuous_text.split(', ')
-
-            # --- 알레르기정보 시트 ---
-            if '알레르기정보' in df_dict:
-                allergens_df = df_dict['알레르기정보']
-                result['allergens'] = {}
-                for _, row in allergens_df.iterrows():
-                    if row['항목'] == '함유 알레르기 유발물질':
-                        result['allergens']['contains'] = row['내용'].split(', ')
-                    elif row['항목'] == '제조시설 안내':
-                        result['allergens']['manufacturing_facility'] = row['내용']
-
-            # --- 영양정보 시트 ---
-            if '영양정보' in df_dict:
-                nutrition_df = df_dict['영양정보']
-                per_100g = {}
-                for _, row in nutrition_df.iterrows():
-                    if row['영양성분'] == '총 열량':
-                        per_100g['calories'] = row['100g 당']
-                    else:
-                        per_100g[row['영양성분']] = {
-                            'amount': row['100g 당'],
-                            'daily_value': row['1일 영양성분 기준치에 대한 비율(%)']
-                        }
-                result['nutrition_info'] = {'per_100g': per_100g}
-
-            if '제조원정보' in df_dict:
-                result['manufacturer'] = df_dict['제조원정보'].to_dict('records')[0]
-
-            if '주의사항' in df_dict:
-                result['precautions'] = df_dict['주의사항']['주의사항'].tolist()
-
-            if '원재료상세' in df_dict:
-                result['details'] = df_dict['원재료상세'].to_dict('records')
-
-            return jsonify(result)
-
-        # ✅ 2) 지금 네가 올린 “표시사항 기초자료” 형식 처리
-        #    (시트 1개, 첫 번째 열에 항목들이 세로로 나열된 구조)
-        # ------------------------------------------------------------
-        # 첫 번째 시트 기준으로 파싱
-        first_sheet_name = list(df_dict.keys())[0]
-        sheet = df_dict[first_sheet_name].copy()
-        sheet = sheet.replace({'nan': ''})  # 문자열 'nan' 정리
-
-        # 기본 컬럼들
-        key_col = sheet.columns[0]                # 예: '야채찌짐이어묵_표시사항'
-        val_col = sheet.columns[1] if len(sheet.columns) > 1 else None  # 예: 'Unnamed: 1'
-        daily_col = sheet.columns[2] if len(sheet.columns) > 2 else None  # 예: 'Unnamed: 2'
-
-        def get_value(label_list):
-            """키 컬럼에서 label_list 중 하나와 일치하는 행의 value(col1)를 가져옴"""
-            if val_col is None:
-                return ""
-            for label in label_list:
-                mask = sheet[key_col] == label
-                if mask.any():
-                    return str(sheet.loc[mask, val_col].iloc[0]).strip()
-            return ""
-
-        # --- 제품 기본 정보 ---
-        product_info = {
-            "product_name": get_value(["제품명"]),
-            "food_type": get_value(["식품유형", "식품의 유형"]),
-            "net_weight": get_value(["내용량"]),
-            "expiration_date": get_value(["소비기한", "유통기한"]),
-            "storage_method": get_value(["보관방법"]),
-            "packaging_material": get_value(["포장재질"]),
-            "item_report_number": get_value(["품목보고번호"]),
-            # 전면 칼로리/문구는 있으면 추가 (없으면 빈 문자열)
-            "front_calories": get_value(["전면표시문구", "전면표시", "전면 표시문구"])
-        }
-        # 하나라도 값이 있으면 product_info 추가
-        if any(v for v in product_info.values()):
-            result["product_info"] = product_info
-
-        # --- 원재료명 (원재료명 아래 줄부터, 알레르기유발물질 전까지) ---
-        ingredients_list = []
-        if "원재료명" in list(sheet[key_col]):
-            start_idx = sheet.index[sheet[key_col] == "원재료명"][0] + 1
-            stop_keywords = ["알레르기유발물질", "알레르기 유발물질", "제조원", "제조원/소재지",
-                             "제조사", "주의사항", "영양정보"]
-            stop_idx = len(sheet)
-
-            for i in range(start_idx, len(sheet)):
-                label = str(sheet.at[i, key_col]).strip()
-                if label and label in stop_keywords:
-                    stop_idx = i
-                    break
-
-            for i in range(start_idx, stop_idx):
-                line = str(sheet.at[i, key_col]).strip()
-                if line:
-                    ingredients_list.append(line)
-
-            if ingredients_list:
-                result["ingredients"] = {
-                    "structured_list": ingredients_list,
-                    "continuous_text": ", ".join(ingredients_list)
-                }
-
-        # --- 알레르기 정보 ---
-        allergens = {}
-        allerg_idx_list = sheet.index[sheet[key_col].str.contains("알레르기", na=False)]
-        if len(allerg_idx_list) > 0:
-            a_start = allerg_idx_list[0] + 1
-            stop_keywords = ["제조원", "제조원/소재지", "제조사", "주의사항", "영양정보"]
-            a_stop = len(sheet)
-
-            for i in range(a_start, len(sheet)):
-                label = str(sheet.at[i, key_col]).strip()
-                if label and label in stop_keywords:
-                    a_stop = i
-                    break
-
-            lines = []
-            for i in range(a_start, a_stop):
-                line = str(sheet.at[i, key_col]).strip()
-                if line:
-                    lines.append(line)
-
-            # 예시:
-            # - "대두, 게 함유"
-            # - "본 제품은 밀, 계란, 우유, 새우, 고등어, 오징어, 조개류(굴, 전복, 홍합 포함)를 ... 사용한 제품과 같은 제조시설에서 제조하고 있습니다."
-            contains = []
-            facility_lines = []
-            for line in lines:
-                if "함유" in line:
-                    tmp = line.replace("함유", "").replace("포함", "")
-                    # 콤마/중점 기준 분리
-                    names = [s.strip(" ,") for s in re.split(r"[,\·ㆍ]", tmp) if s.strip()]
-                    contains.extend(names)
-                else:
-                    facility_lines.append(line)
-
-            if contains:
-                allergens["contains"] = contains
-            if facility_lines:
-                allergens["manufacturing_facility"] = " ".join(facility_lines)
-
-        if allergens:
-            result["allergens"] = allergens
-
-        # --- 제조원 정보 ---
-        manu_idx_list = sheet.index[sheet[key_col].str.contains("제조원", na=False)]
-        if len(manu_idx_list) > 0 and val_col is not None:
-            m_idx = manu_idx_list[0]
-            manu_raw = str(sheet.at[m_idx, val_col]).strip()
-            # 예: "삼진식품(주) / 부산광역시 사하구 다대로 1066번길 51(장림동)"
-            name = manu_raw
-            address = ""
-            if "/" in manu_raw:
-                parts = manu_raw.split("/")
-                name = parts[0].strip()
-                address = "/".join(parts[1:]).strip()
-            result["manufacturer"] = {
-                "name": name,
-                "address": address
+        
+        # 1) 제품정보 시트가 있으면 그대로 읽기
+        if '제품정보' in df_dict:
+            product_info = df_dict['제품정보'].to_dict('records')[0]
+            result['product_info'] = product_info
+        
+        # 2) 첫 번째 시트 기준 설정 (원재료명 없을 때 대비)
+        sheet_names = list(df_dict.keys())          # 시트 이름 리스트
+        first_sheet_name = sheet_names[0]           # 첫 번째 시트 이름 (문자열)
+        first_sheet_df = df_dict[first_sheet_name]  # 첫 번째 시트 DataFrame
+        
+        # 3) 원재료명 처리
+        if '원재료명' in df_dict:
+            # "원재료명" 시트가 있는 경우
+            ingredients_list = df_dict['원재료명']['원재료명'].dropna().tolist()
+            result['ingredients'] = {
+                'structured_list': ingredients_list,
+                'continuous_text': ', '.join(ingredients_list)
             }
-
-        # --- 주의사항 ---
-        prec_idx_list = sheet.index[sheet[key_col] == "주의사항"]
-        if len(prec_idx_list) > 0 and val_col is not None:
-            p_idx = prec_idx_list[0]
-            prec_raw = str(sheet.at[p_idx, val_col]).strip()
-            # "⦁" 기준으로 분리
-            if "⦁" in prec_raw:
-                items = [s.strip() for s in prec_raw.split("⦁") if s.strip()]
+        elif '원재료명_연속텍스트' in df_dict:
+            continuous_text = df_dict['원재료명_연속텍스트']['원재료명_연속텍스트'].iloc[0]
+            result['ingredients'] = {
+                'structured_list': continuous_text.split(', '),
+                'continuous_text': continuous_text
+            }
+        elif not first_sheet_df.empty:
+            # 첫 번째 시트의 첫 번째 컬럼을 원재료명으로 사용
+            first_column = first_sheet_df.columns[0]
+            if '원재료명' in first_sheet_df.columns:
+                ingredients_list = first_sheet_df['원재료명'].dropna().tolist()
             else:
-                items = [prec_raw] if prec_raw else []
-            if items:
-                result["precautions"] = items
-
-        # --- 영양정보 ---
-        nutrition_info = {}
-        per_100g = {}
-
-        nut_idx_list = sheet.index[sheet[key_col] == "영양정보"]
-        if len(nut_idx_list) > 0:
-            n_idx = nut_idx_list[0]
-            header_val = str(sheet.at[n_idx, val_col]).strip() if val_col is not None else ""
-
-            # "총 내용량 900 g/ 100 g당 130 kcal" 같은 형식 파싱
-            total_content = ""
-            calories = ""
-
-            m_total = re.search(r"총\s*내용량\s*([0-9.,]+\s*\w+)", header_val)
-            if m_total:
-                total_content = m_total.group(1).strip()
-
-            m_cal = re.search(r"100\s*g당\s*([0-9.,]+\s*k?cal)", header_val, re.IGNORECASE)
-            if m_cal:
-                calories = m_cal.group(1).strip()
-
-            if calories:
-                per_100g["calories"] = calories
-            if total_content:
-                nutrition_info["total_content"] = total_content
-
-            # 바로 아래 줄들: 열량, 나트륨, 탄수화물, 당류, 지방, 포화지방, 트랜스지방, 콜레스테롤, 단백질 등
-            nutrient_names = [
-                "열량", "나트륨", "탄수화물", "당류", "지방",
-                "트랜스지방", "포화지방", "콜레스테롤", "단백질"
-            ]
-
-            for i in range(n_idx + 1, len(sheet)):
-                name = str(sheet.at[i, key_col]).strip()
-                if name not in nutrient_names:
-                    continue
-                amount = str(sheet.at[i, val_col]).strip() if val_col is not None else ""
-                daily = str(sheet.at[i, daily_col]).strip() if daily_col is not None else ""
-                if not amount and not daily:
-                    continue
-
-                if name == "열량":
-                    per_100g["calories"] = amount or per_100g.get("calories", "")
+                ingredients_list = first_sheet_df[first_column].dropna().astype(str).tolist()
+            
+            if ingredients_list:
+                result['ingredients'] = {
+                    'structured_list': ingredients_list,
+                    'continuous_text': ', '.join(ingredients_list)
+                }
+        
+        # 4) 알레르기 정보
+        if '알레르기정보' in df_dict:
+            allergens_df = df_dict['알레르기정보']
+            result['allergens'] = {}
+            for _, row in allergens_df.iterrows():
+                if row['항목'] == '함유 알레르기 유발물질':
+                    result['allergens']['contains'] = row['내용'].split(', ')
+                elif row['항목'] == '제조시설 안내':
+                    result['allergens']['manufacturing_facility'] = row['내용']
+        
+        # 5) 영양정보
+        if '영양정보' in df_dict:
+            nutrition_df = df_dict['영양정보']
+            per_100g = {}
+            for _, row in nutrition_df.iterrows():
+                if row['영양성분'] == '총 열량':
+                    per_100g['calories'] = row['100g 당']
                 else:
-                    per_100g[name] = {
-                        "amount": amount,
-                        "daily_value": daily
+                    per_100g[row['영양성분']] = {
+                        'amount': row['100g 당'],
+                        'daily_value': row['1일 영양성분 기준치에 대한 비율(%)']
                     }
-
-        if per_100g:
-            nutrition_info["per_100g"] = per_100g
-        if nutrition_info:
-            result["nutrition_info"] = nutrition_info
-
-        # details는 아직 엑셀에 명확한 구조가 없으니 빈 배열로
-        if "details" not in result:
-            result["details"] = []
-
+            result['nutrition_info'] = {'per_100g': per_100g}
+        
+        # 6) 제조원 정보
+        if '제조원정보' in df_dict:
+            result['manufacturer'] = df_dict['제조원정보'].to_dict('records')[0]
+        
+        # 7) 주의사항
+        if '주의사항' in df_dict:
+            result['precautions'] = df_dict['주의사항']['주의사항'].tolist()
+        
+        # 8) 원재료상세
+        if '원재료상세' in df_dict:
+            result['details'] = df_dict['원재료상세'].to_dict('records')
+        
         return jsonify(result)
-
     except Exception as e:
         print(f"❌ 엑셀 읽기 오류: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
 
 
 @app.route('/api/verify-design', methods=['POST'])
@@ -1329,8 +1127,8 @@ def verify_design():
             )
 
             first_sheet_name = list(df_dict.keys())
+            first_sheet_name = sheet_names[0]
             first_sheet_df = df_dict[first_sheet_name]
-            standard_data = {}
 
             if not first_sheet_df.empty:
                 col = first_sheet_df.columns
