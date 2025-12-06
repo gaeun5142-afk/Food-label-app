@@ -1242,14 +1242,38 @@ def verify_design():
         json_match = re.search(r"(\{.*\})", result_text, re.DOTALL)
 
         if json_match:
-            clean_json = json_match.group(1)
-            # 간단한 쉼표 보정
-            clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
-            return jsonify(json.loads(clean_json))
+            if json_match:
+                clean_json = json_match.group(1)
+                clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
+    
+                # ⭐ JSON 객체로 로드
+                json_obj = json.loads(clean_json)
+
+                # ⭐ OCR 텍스트 및 issues 가져오기
+                design_text = json_obj.get("design_ocr_text", "")
+                issues = json_obj.get("issues", [])
+
+                # ⭐ position 자동 생성
+                issues = add_issue_positions(issues, design_text)
+
+                # ⭐ JSON에 덮어쓰기
+                json_obj["issues"] = issues
+
+                return jsonify(json_obj)
+
         else:
-            # JSON 패턴 못 찾으면 원본에서 시도 (혹시 모르니)
             clean_json = result_text.replace("``````", "").strip()
-            return jsonify(json.loads(clean_json))
+
+            json_obj = json.loads(clean_json)
+
+            design_text = json_obj.get("design_ocr_text", "")
+            issues = json_obj.get("issues", [])
+
+            issues = add_issue_positions(issues, design_text)
+            json_obj["issues"] = issues
+
+            return jsonify(json_obj)
+
 
     except Exception as e:
         print(f"❌ 검증 오류: {e}")
