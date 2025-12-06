@@ -1323,15 +1323,19 @@ def verify_design_strict():
         issues = compare_texts_strict(std_text, des_text)  # 3-1에서 추가한 함수 사용
 
         for issue in issues:
+            issue_type = "Critical" if issue["expected"] not in [" ", ",", "."] else "Minor"
+        
             all_issues.append({
-                "type": "Critical" if issue['expected'] not in [' ', ',', '.'] else "Minor",
+                "type": issue_type,
                 "location": f"원재료명 (위치: {issue['position']})",
                 "issue": f"'{issue['expected']}' → '{issue['actual']}'",
                 "expected": std_text,
                 "actual": des_text,
-                "suggestion": f"위치 {issue['position']}의 '{issue['actual']}'을(를) '{issue['expected']}'(으)로 수정"
+                "suggestion": f"위치 {issue['position']}의 '{issue['actual']}'을(를) '{issue['expected']}'(으)로 수정",
+                "position": issue["position"],          # ⭐ 이 줄 추가
+                "context_before": issue["context_before"],
+                "context_after": issue["context_after"],
             })
-
         # 점수 계산
         critical_count = sum(1 for i in all_issues if i['type'] == 'Critical')
         minor_count = sum(1 for i in all_issues if i['type'] == 'Minor')
