@@ -1129,7 +1129,9 @@ def verify_design():
             first_sheet_name = list(df_dict.keys())
             first_sheet_name = sheet_names[0]
             first_sheet_df = df_dict[first_sheet_name]
-
+            
+            standard_data = {}
+    
             if not first_sheet_df.empty:
                 col = first_sheet_df.columns
                 if '원재료명' in first_sheet_df.columns: col = '원재료명'
