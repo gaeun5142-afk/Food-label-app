@@ -1185,31 +1185,71 @@ def verify_design():
         except Exception as e:
             print(f"⚠️ 법령 파일 읽기 실패 ({file_path}): {e}")
 
-    # 4. ⭐ 강제 OCR 실행 (design_ocr_text 확보)
-    try:
+    # 4. ✅ OCR 안정화 실행 (최소 3회 재시도 + JSON 복구)
+    forced_design_text = ""
+    ocr_errors = []
+
+    for attempt in range(1, 4):
+        try:
+        print(f"🔄 OCR 시도 {attempt}/3")
+
+        design_file.seek(0)
+
         ocr_parts = [
             PROMPT_EXTRACT_RAW_TEXT,
             process_file_to_part(design_file)
-        ]
-        ocr_model = genai.GenerativeModel(MODEL_NAME, generation_config={
-            "temperature": 0.0,
-            "top_k": 1,
-            "response_mime_type": "application/json"
-        })
+            ]
+
+        ocr_model = genai.GenerativeModel(
+            MODEL_NAME,
+            generation_config={
+                "temperature": 0.0,
+                "top_k": 1,
+                "top_p": 1.0,
+                "response_mime_type": "application/json",
+                "max_output_tokens": 8192
+            }
+        )
 
         ocr_response = ocr_model.generate_content(ocr_parts)
-        ocr_text = ocr_response.text.strip()
 
-        if ocr_text.startswith("```json"):
-            ocr_text = ocr_text[7:-3]
+        raw_text = ocr_response.text.strip()
+        print(f"✅ OCR 원문 ({attempt}회):", raw_text[:200])
 
-        ocr_json = json.loads(ocr_text)
-        forced_design_text = ocr_json.get("raw_text", "")
+        # ✅ 코드블록 제거
+        if raw_text.startswith("```"):
+            raw_text = raw_text.split("```")[1].strip()
+            if raw_text.startswith("json"):
+                raw_text = raw_text[4:].strip()
+
+        # ✅ JSON 파싱
+        ocr_json = json.loads(raw_text)
+
+        forced_design_text = ocr_json.get("raw_text", "").strip()
+
+        if forced_design_text:
+            print(f"✅ OCR 성공 ({attempt}회) - 글자수: {len(forced_design_text)}")
+            break
+        else:
+            raise ValueError("raw_text 비어 있음")
 
     except Exception as e:
-        print("OCR 강제 추출 실패:", e)
+        error_msg = f"OCR {attempt}회 실패: {e}"
+        print("⚠️", error_msg)
+        ocr_errors.append(error_msg)
         forced_design_text = ""
+        continue
 
+# ✅ 최종 실패 대비 안전 장치
+if not forced_design_text:
+    forced_design_text = "[OCR 실패] 이미지에서 텍스트를 정상적으로 추출하지 못했습니다."
+    print("❌ OCR 최종 실패 - 모든 시도 실패")
+    for err in ocr_errors:
+        print(" -", err)
+
+
+
+    
     # 5. ⭐ AI 프롬프트 조립
     parts = [f"""
 🚨🚨🚨 절대 규칙 🚨🚨🚨
