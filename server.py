@@ -1231,6 +1231,13 @@ def verify_design():
 
         # ✅ OCR 원문 강제 삽입
         json_obj["design_ocr_text"] = forced_design_text
+        # ✅ 프론트 하이라이트 필드 강제 보장 (이게 빠져서 안 뜬 거임)
+
+if "design_ocr_text" not in json_obj or not json_obj["design_ocr_text"]:
+    json_obj["design_ocr_text"] = forced_design_text
+
+if "issues" not in json_obj or not isinstance(json_obj["issues"], list):
+    json_obj["issues"] = []
 
         # ✅ 하이라이트 위치 계산 (이전 단계에서 내가 고쳐준 add_issue_positions 사용)
         issues = json_obj.get("issues", [])
