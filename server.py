@@ -1126,10 +1126,9 @@ def read_standard_excel():
 # 2단계: 검증하기 (엑셀 파일 또는 JSON + 디자인 이미지)
 @app.route('/api/verify-design', methods=['POST'])
 def verify_design():
-    print("🕵️‍♂️ 2단계: 디자인 검증 시작...")
-
     try:
-        # 1. 파일 받기
+        print("🕵️‍♂️ 2단계: 디자인 검증 시작...")
+
         design_file = request.files.get('design_file')
         standard_excel = request.files.get('standard_excel')
         standard_json = request.form.get('standard_data')
@@ -1141,7 +1140,7 @@ def verify_design():
         if standard_excel:
             standard_excel.seek(0)
 
-        # 2. 기준 데이터 로딩 (엑셀 → JSON 변환)
+        # ✅ 엑셀 기준 데이터 처리
         if standard_excel:
             df_dict = pd.read_excel(
                 io.BytesIO(standard_excel.read()),
@@ -1154,78 +1153,56 @@ def verify_design():
             first_sheet_name = list(df_dict.keys())[0]
             first_sheet_df = df_dict[first_sheet_name]
 
-            if not first_sheet_df.empty:
-                col = first_sheet_df.columns[0]
-                if '원재료명' in first_sheet_df.columns:
-                    col = '원재료명'
+            col = first_sheet_df.columns[0]
+            if '원재료명' in first_sheet_df.columns:
+                col = '원재료명'
 
-                ingredients_list = first_sheet_df[col].dropna().astype(str).tolist()
-                standard_data = {
-                    'ingredients': {
-                        'structured_list': ingredients_list,
-                        'continuous_text': ', '.join(ingredients_list)
-                    }
+            ingredients_list = first_sheet_df[col].dropna().astype(str).tolist()
+            standard_json = json.dumps({
+                'ingredients': {
+                    'structured_list': ingredients_list,
+                    'continuous_text': ', '.join(ingredients_list)
                 }
+            }, ensure_ascii=False)
 
-                standard_json = json.dumps(standard_data, ensure_ascii=False)
-
-        # 3. 법령 로딩
+        # ✅ 법령 로딩
         law_text = ""
         for file_path in glob.glob('law_*.txt'):
             with open(file_path, 'r', encoding='utf-8') as f:
-                law_text += f"\n\n=== [참고 법령: {file_path}] ===\n{f.read()}\n"
+                law_text += f.read() + "\n"
 
-        # 4. ✅ OCR 3회 재시도
+        # ✅ OCR 강제 3회
         forced_design_text = ""
-        for attempt in range(3):
-            try:
-                design_file.seek(0)
 
-                ocr_parts = [
-                    PROMPT_EXTRACT_RAW_TEXT,
-                    process_file_to_part(design_file)
-                ]
+        for _ in range(3):
+            design_file.seek(0)
+            ocr_parts = [
+                PROMPT_EXTRACT_RAW_TEXT,
+                process_file_to_part(design_file)
+            ]
+            ocr_model = genai.GenerativeModel(MODEL_NAME)
+            ocr_response = ocr_model.generate_content(ocr_parts)
 
-                ocr_model = genai.GenerativeModel(
-                    MODEL_NAME,
-                    generation_config={
-                        "temperature": 0.0,
-                        "top_k": 1,
-                        "top_p": 1.0,
-                        "response_mime_type": "application/json",
-                        "max_output_tokens": 8192
-                    }
-                )
+            raw = ocr_response.text.strip()
+            if raw.startswith("```"):
+                raw = raw.split("```")[1].strip()
+                if raw.startswith("json"):
+                    raw = raw[4:].strip()
 
-                ocr_response = ocr_model.generate_content(ocr_parts)
-                raw_text = ocr_response.text.strip()
-
-                if raw_text.startswith("```"):
-                    raw_text = raw_text.split("```")[1].strip()
-                    if raw_text.startswith("json"):
-                        raw_text = raw_text[4:].strip()
-
-                ocr_json = json.loads(raw_text)
-                forced_design_text = ocr_json.get("raw_text", "").strip()
-
-                if forced_design_text:
-                    print("✅ OCR 성공")
-                    break
-
-            except:
-                continue
+            forced_design_text = json.loads(raw).get("raw_text", "").strip()
+            if forced_design_text:
+                break
 
         if not forced_design_text:
             forced_design_text = "[OCR 실패]"
 
-        # 5. ✅ Gemini 프롬프트 구성 (🚨 절대 규칙 + 📚 법령 + ✅ 기준데이터 + ✅ OCR 모두 포함)
-parts = [f"""
+        # ✅ Gemini 프롬프트 조립 (네가 말한 절대 규칙 + 법령 포함)
+        parts = [f"""
 🚨🚨🚨 절대 규칙 🚨🚨🚨
 - 띄어쓰기 중요: "16 g" ≠ "16g"
 - 숫자 그대로: "221%" → "221%"
 - 오타 그대로 유지
 - 절대 추측 금지
-- 자동보정 절대 금지 (맞춤법, 띄어쓰기, 숫자 수정 불가)
 
 {PROMPT_VERIFY_DESIGN}
 
@@ -1239,71 +1216,35 @@ parts = [f"""
 {forced_design_text}
 """]
 
-# ✅ 실제 이미지도 함께 전달
-parts.append(process_file_to_part(design_file))
+        parts.append(process_file_to_part(design_file))
 
-
-       # 6. ✅ Gemini 호출
+        # ✅ Gemini 호출
         model = genai.GenerativeModel(MODEL_NAME)
         response = model.generate_content(parts)
-        result_text = response.text.strip()
 
+        result_text = response.text.strip()
         match = re.search(r"(\{.*\})", result_text, re.DOTALL)
         if not match:
-            return jsonify({"error": "Gemini JSON 응답 파싱 실패"}), 500
+            return jsonify({"error": "Gemini 응답 JSON 파싱 실패"}), 500
 
         json_obj = json.loads(match.group(1))
 
-        # ✅ 강제 OCR 삽입
+        # ✅ OCR 원문 강제 삽입
         json_obj["design_ocr_text"] = forced_design_text
 
-        # ✅ position 재계산 (핵심 수정 포인트)
-        design_text = forced_design_text
+        # ✅ 하이라이트 위치 계산 (이전 단계에서 내가 고쳐준 add_issue_positions 사용)
         issues = json_obj.get("issues", [])
-
-        fixed_issues = []
-        for issue in issues:
-            actual = (issue.get("actual") or "").strip()
-            pos = -1
-
-            if actual and actual in design_text:
-                pos = design_text.find(actual)
-
-            issue["position"] = pos if pos != -1 else None
-            fixed_issues.append(issue)
-
-        json_obj["issues"] = fixed_issues
-
-        # ✅ 하이라이트 생성
-        highlight_html = design_text
-
-        for issue in sorted(fixed_issues, key=lambda x: x.get("position", -1), reverse=True):
-            pos = issue.get("position")
-
-            if isinstance(pos, int) and 0 <= pos < len(highlight_html):
-                wrong_char = highlight_html[pos]
-                expected = issue.get("expected", "")
-
-                span = (
-                    f"<span style='background:#ffe6e6; color:#d32f2f; font-weight:bold;' "
-                    f"title='정답: {expected}'>{wrong_char}</span>"
-                )
-
-                highlight_html = (
-                    highlight_html[:pos]
-                    + span
-                    + highlight_html[pos + 1:]
-                )
-
-        json_obj["design_ocr_highlighted_html"] = highlight_html
+        issues = add_issue_positions(issues, forced_design_text)
+        json_obj["issues"] = issues
 
         return jsonify(json_obj)
 
     except Exception as e:
-        print("❌ verify_design 오류:", e)
+        print(f"❌ 검증 오류: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
 
 @app.route('/api/verify-design-strict', methods=['POST'])
 def verify_design_strict():
