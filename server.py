@@ -1323,9 +1323,9 @@ if not forced_design_text:
 
         # position 기준으로 뒤에서부터 span 삽입 (인덱스 깨짐 방지)
         for issue in sorted(issues, key=lambda x: x.get("position", -1), reverse=True):
-          pos = issue.get("position")
+    pos = issue.get("position")
 
-        if isinstance(pos, int) and 0 <= pos < len(highlight_html):
+    if isinstance(pos, int) and 0 <= pos < len(highlight_html):
         wrong_char = highlight_html[pos]
         expected = issue.get("expected", "")
 
@@ -1336,6 +1336,7 @@ if not forced_design_text:
             + span
             + highlight_html[pos + 1 :]
         )
+
 
 json_obj["design_ocr_highlighted_html"] = highlight_html
 
