@@ -1246,22 +1246,42 @@ def verify_design():
 
         json_obj = json.loads(match.group(1))
 
-        # ✅ ✅ ✅ 프론트 필드 강제 주입 (이게 핵심이다)
-        json_obj["design_ocr_text"] = forced_design_text
-        if "issues" not in json_obj or not isinstance(json_obj["issues"], list):
-            json_obj["issues"] = []
+        # ✅ ✅ ✅ 프론트 필드 강제 주입 (OCR 원문)
+json_obj["design_ocr_text"] = forced_design_text
 
-        # ✅ 하이라이트 위치 계산
-        issues = add_issue_positions(json_obj["issues"], forced_design_text)
-        json_obj["issues"] = issues
+if "issues" not in json_obj or not isinstance(json_obj["issues"], list):
+    json_obj["issues"] = []
 
-        return jsonify(json_obj)
+# ✅ 하이라이트 위치 계산
+issues = add_issue_positions(json_obj["issues"], forced_design_text)
+json_obj["issues"] = issues
 
-    except Exception as e:
-        print("❌ verify_design 오류:", e)
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+# ✅ ✅ ✅ ✅ ✅ 핵심: 하이라이트 HTML 생성
+highlight_html = forced_design_text
+
+for issue in sorted(json_obj["issues"], key=lambda x: x.get("position", -1), reverse=True):
+    pos = issue.get("position")
+
+    if isinstance(pos, int) and 0 <= pos < len(highlight_html):
+        wrong_char = highlight_html[pos]
+        expected = issue.get("expected", "")
+
+        span = (
+            f"<span style='background:#ffe6e6; color:#d32f2f; font-weight:bold;' "
+            f"title='정답: {expected}'>{wrong_char}</span>"
+        )
+
+        highlight_html = (
+            highlight_html[:pos]
+            + span
+            + highlight_html[pos + 1:]
+        )
+
+# ✅ ✅ ✅ 프론트에서 직접 쓰는 필드 (이게 없어서 계속 안 떴던 거임)
+json_obj["design_ocr_highlighted_html"] = highlight_html
+
+return jsonify(json_obj)
+
 
 
 
