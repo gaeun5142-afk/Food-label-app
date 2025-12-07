@@ -1212,8 +1212,8 @@ def verify_design():
         )
 
         ocr_response = ocr_model.generate_content(ocr_parts)
-
         raw_text = ocr_response.text.strip()
+        
         print(f"✅ OCR 원문 ({attempt}회):", raw_text[:200])
 
         # ✅ 코드블록 제거
@@ -1234,11 +1234,9 @@ def verify_design():
             raise ValueError("raw_text 비어 있음")
 
     except Exception as e:
-        error_msg = f"OCR {attempt}회 실패: {e}"
-        print("⚠️", error_msg)
-        ocr_errors.append(error_msg)
-        forced_design_text = ""
-        continue
+        err = f"OCR {attempt}회 실패: {e}"
+        print("⚠️", err)
+        ocr_errors.append(err)
 
 # ✅ 최종 실패 대비 안전 장치
 if not forced_design_text:
@@ -1318,6 +1316,27 @@ if not forced_design_text:
 
         issues = add_issue_positions(issues, design_text)
         json_obj["issues"] = issues
+
+        # ✅ design_ocr_highlighted_html 생성 (Streamlit용)
+        highlight_html = design_text
+
+        # position 기준으로 뒤에서부터 span 삽입 (인덱스 깨짐 방지)
+        for issue in sorted(issues, key=lambda x: x.get("position", -1), reverse=True):
+          pos = issue.get("position")
+
+        if isinstance(pos, int) and 0 <= pos < len(highlight_html):
+        wrong_char = highlight_html[pos]
+        expected = issue.get("expected", "")
+
+        span = f"<span style='background:#ffe6e6; color:#d32f2f; font-weight:bold;' title='정답: {expected}'>{wrong_char}</span>"
+
+        highlight_html = (
+            highlight_html[:pos]
+            + span
+            + highlight_html[pos + 1 :]
+        )
+
+json_obj["design_ocr_highlighted_html"] = highlight_html
 
         return jsonify(json_obj)
 
