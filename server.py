@@ -17,35 +17,36 @@ load_dotenv()
 
 def add_issue_positions(issues, full_text: str):
     """
-    issues 리스트에 'position' 키를 채워넣는 함수.
-    full_text: OCR로 뽑은 전체 텍스트 (design_ocr_text)
+    ✅ [최종 보정 버전]
+    - 동일 단어 중복 문제 해결
+    - 실제 비교 순서대로 position 매칭
+    - 엉뚱한 하이라이트 방지
     """
     if not full_text or not issues:
         return issues
 
-    text = full_text  # 그대로 쓰거나 .lower()로 바꿀 수도 있음
+    text = full_text
+    search_start = 0  # ✅ 이전에 찾은 위치 이후부터 다시 찾기
 
     for issue in issues:
-        # 이미 position이 있으면 건너뛰기
-        if isinstance(issue.get("position"), int):
-            continue
-
         actual = (issue.get("actual") or "").strip()
         expected = (issue.get("expected") or "").strip()
 
         pos = -1
 
-        # 1) 우선 actual(실제 표시된 문자열) 위치 찾기
+        # ✅ actual 먼저 탐색 (이전 위치 이후)
         if actual:
-            pos = text.find(actual)
+            pos = text.find(actual, search_start)
 
-        # 2) 못 찾으면 expected(정답)로라도 찾아보기 (선택)
+        # ✅ actual로 못 찾으면 expected로 탐색
         if pos == -1 and expected:
-            pos = text.find(expected)
+            pos = text.find(expected, search_start)
 
-        # 3) 그래도 못 찾으면 그냥 넘어감 (이 이슈는 하이라이트 X)
         if pos != -1:
             issue["position"] = pos
+            search_start = pos + 1  # ✅ 다음 탐색은 이 뒤에서 시작
+        else:
+            issue["position"] = -1
 
     return issues
 
