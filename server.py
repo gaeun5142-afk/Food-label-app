@@ -1185,79 +1185,62 @@ def verify_design():
         except Exception as e:
             print(f"⚠️ 법령 파일 읽기 실패 ({file_path}): {e}")
 
-    # 4. ✅ OCR 안정화 실행 (최소 3회 재시도 + JSON 복구)
+    # 4. ✅ OCR 안정화 실행 (3회 재시도)
     forced_design_text = ""
     ocr_errors = []
 
     for attempt in range(1, 4):
         try:
-        print(f"🔄 OCR 시도 {attempt}/3")
+            print(f"🔄 OCR 시도 {attempt}/3")
 
-        design_file.seek(0)
+            design_file.seek(0)
 
-        ocr_parts = [
-            PROMPT_EXTRACT_RAW_TEXT,
-            process_file_to_part(design_file)
+            ocr_parts = [
+                PROMPT_EXTRACT_RAW_TEXT,
+                process_file_to_part(design_file)
             ]
 
-        ocr_model = genai.GenerativeModel(
-            MODEL_NAME,
-            generation_config={
-                "temperature": 0.0,
-                "top_k": 1,
-                "top_p": 1.0,
-                "response_mime_type": "application/json",
-                "max_output_tokens": 8192
-            }
-        )
+            ocr_model = genai.GenerativeModel(
+                MODEL_NAME,
+                generation_config={
+                    "temperature": 0.0,
+                    "top_k": 1,
+                    "top_p": 1.0,
+                    "response_mime_type": "application/json",
+                    "max_output_tokens": 8192
+                }
+            )
 
-        ocr_response = ocr_model.generate_content(ocr_parts)
+            ocr_response = ocr_model.generate_content(ocr_parts)
+            raw_text = ocr_response.text.strip()
 
-        raw_text = ocr_response.text.strip()
-        print(f"✅ OCR 원문 ({attempt}회):", raw_text[:200])
+            if raw_text.startswith("```"):
+                raw_text = raw_text.split("```")[1].strip()
+                if raw_text.startswith("json"):
+                    raw_text = raw_text[4:].strip()
 
-        # ✅ 코드블록 제거
-        if raw_text.startswith("```"):
-            raw_text = raw_text.split("```")[1].strip()
-            if raw_text.startswith("json"):
-                raw_text = raw_text[4:].strip()
+            ocr_json = json.loads(raw_text)
+            forced_design_text = ocr_json.get("raw_text", "").strip()
 
-        # ✅ JSON 파싱
-        ocr_json = json.loads(raw_text)
+            if forced_design_text:
+                print(f"✅ OCR 성공 ({attempt}회)")
+                break
+            else:
+                raise ValueError("raw_text 비어 있음")
 
-        forced_design_text = ocr_json.get("raw_text", "").strip()
+        except Exception as e:
+            ocr_errors.append(str(e))
 
-        if forced_design_text:
-            print(f"✅ OCR 성공 ({attempt}회) - 글자수: {len(forced_design_text)}")
-            break
-        else:
-            raise ValueError("raw_text 비어 있음")
+    if not forced_design_text:
+        forced_design_text = "[OCR 실패]"
 
-    except Exception as e:
-        error_msg = f"OCR {attempt}회 실패: {e}"
-        print("⚠️", error_msg)
-        ocr_errors.append(error_msg)
-        forced_design_text = ""
-        continue
-
-# ✅ 최종 실패 대비 안전 장치
-if not forced_design_text:
-    forced_design_text = "[OCR 실패] 이미지에서 텍스트를 정상적으로 추출하지 못했습니다."
-    print("❌ OCR 최종 실패 - 모든 시도 실패")
-    for err in ocr_errors:
-        print(" -", err)
-
-
-
-    
-    # 5. ⭐ AI 프롬프트 조립
+        # 5. ✅ Gemini 프롬프트 구성 (📚 법령 포함)
     parts = [f"""
 🚨🚨🚨 절대 규칙 🚨🚨🚨
-🚨 절대 규칙: 이미지와 Standard를 정확히 비교하세요!
 - 띄어쓰기 중요: "16 g" ≠ "16g"
 - 숫자 그대로: "221%" → "221%"
-- 오타 그대로: "전반가공품" → "전반가공품"
-- 추측 금지
+- 오타 그대로 유지
+- 절대 추측 금지
 
 {PROMPT_VERIFY_DESIGN}
 
@@ -1267,59 +1250,60 @@ if not forced_design_text:
 [기준 데이터]
 {standard_json}
 
-[디자인 OCR (강제 추출 결과)]
+[디자인 OCR (강제 추출)]
 {forced_design_text}
 """]
 
-    # 실제 이미지도 AI에게 전달
+    # ✅ 실제 이미지도 같이 전달
     parts.append(process_file_to_part(design_file))
 
-    # 6. AI 호출
-    try:
-        generation_config = {
-            "temperature": 0.0,
-            "top_p": 1.0,
-            "top_k": 1,
-            "candidate_count": 1,
-            "max_output_tokens": 32768,
-            "response_mime_type": "application/json"
-        }
+    # 6. ✅ Gemini 호출
+    model = genai.GenerativeModel(MODEL_NAME)
+    response = model.generate_content(parts)
 
-        system_instruction = """
-        당신은 정밀한 OCR 및 검증 AI입니다.
-        이미지의 모든 글자를 똑같이 비교하고 문자 1개라도 다르면 오류로 기록하세요.
-        """
+    result_text = response.text.strip()
 
-        model = genai.GenerativeModel(
-            MODEL_NAME,
-            generation_config=generation_config,
-            system_instruction=system_instruction
-        )
+    match = re.search(r"(\{.*\})", result_text, re.DOTALL)
+    if not match:
+        return jsonify({"error": "Gemini 응답에서 JSON을 찾지 못함"}), 500
 
-        response = model.generate_content(parts)
-        result_text = response.text.strip()
+    json_obj = json.loads(match.group(1))
 
-        # JSON 추출
-        json_match = re.search(r"(\{.*\})", result_text, re.DOTALL)
+    # ✅ OCR 원문을 응답에 강제 삽입 (하이라이트용 핵심)
+    json_obj["design_ocr_text"] = forced_design_text
 
-        if json_match:
-            clean_json = json_match.group(1)
-            clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
+    # 7. ✅ 하이라이트 위치 계산
+    design_text = forced_design_text
+    issues = json_obj.get("issues", [])
 
-            json_obj = json.loads(clean_json)
+    issues = add_issue_positions(issues, design_text)
+    json_obj["issues"] = issues
 
-        else:
-            clean_json = result_text.replace("```", "").strip()
-            json_obj = json.loads(clean_json)
+    highlight_html = design_text
 
-        # 7. 하이라이트 위치 계산 (position 추가)
-        design_text = json_obj.get("design_ocr_text", "")
-        issues = json_obj.get("issues", [])
+    for issue in sorted(issues, key=lambda x: x.get("position", -1), reverse=True):
+        pos = issue.get("position")
 
-        issues = add_issue_positions(issues, design_text)
-        json_obj["issues"] = issues
+        if isinstance(pos, int) and 0 <= pos < len(highlight_html):
+            wrong_char = highlight_html[pos]
+            expected = issue.get("expected", "")
 
-        return jsonify(json_obj)
+            span = (
+                f"<span style='background:#ffe6e6; color:#d32f2f; font-weight:bold;' "
+                f"title='정답: {expected}'>{wrong_char}</span>"
+            )
+
+            highlight_html = (
+                highlight_html[:pos]
+                + span
+                + highlight_html[pos + 1:]
+            )
+
+    json_obj["design_ocr_highlighted_html"] = highlight_html
+
+    return jsonify(json_obj)
+
+   
 
     except Exception as e:
         print(f"❌ 검증 오류: {e}")
