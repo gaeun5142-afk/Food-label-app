@@ -1189,8 +1189,12 @@ def verify_design():
     forced_design_text = ""
     ocr_errors = []
 
-    for attempt in range(1, 4):
-        try:
+    # 4. ✅ OCR 안정화 실행 (3회 재시도)
+forced_design_text = ""
+ocr_errors = []
+
+for attempt in range(1, 4):
+    try:
         print(f"🔄 OCR 시도 {attempt}/3")
 
         design_file.seek(0)
@@ -1198,7 +1202,7 @@ def verify_design():
         ocr_parts = [
             PROMPT_EXTRACT_RAW_TEXT,
             process_file_to_part(design_file)
-            ]
+        ]
 
         ocr_model = genai.GenerativeModel(
             MODEL_NAME,
@@ -1213,18 +1217,16 @@ def verify_design():
 
         ocr_response = ocr_model.generate_content(ocr_parts)
         raw_text = ocr_response.text.strip()
-        
-        print(f"✅ OCR 원문 ({attempt}회):", raw_text[:200])
 
-        # ✅ 코드블록 제거
+        print(f"✅ OCR 원문 ({attempt}회): {raw_text[:200]}")
+
+        # 코드블록 제거
         if raw_text.startswith("```"):
             raw_text = raw_text.split("```")[1].strip()
             if raw_text.startswith("json"):
                 raw_text = raw_text[4:].strip()
 
-        # ✅ JSON 파싱
         ocr_json = json.loads(raw_text)
-
         forced_design_text = ocr_json.get("raw_text", "").strip()
 
         if forced_design_text:
@@ -1238,13 +1240,12 @@ def verify_design():
         print("⚠️", err)
         ocr_errors.append(err)
 
-# ✅ 최종 실패 대비 안전 장치
+# ✅ 최종 실패 대비 안전장치
 if not forced_design_text:
     forced_design_text = "[OCR 실패] 이미지에서 텍스트를 정상적으로 추출하지 못했습니다."
-    print("❌ OCR 최종 실패 - 모든 시도 실패")
+    print("❌ OCR 최종 실패")
     for err in ocr_errors:
         print(" -", err)
-
 
 
     
