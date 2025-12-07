@@ -17,36 +17,35 @@ load_dotenv()
 
 def add_issue_positions(issues, full_text: str):
     """
-    ✅ [최종 보정 버전]
-    - 동일 단어 중복 문제 해결
-    - 실제 비교 순서대로 position 매칭
-    - 엉뚱한 하이라이트 방지
+    issues 리스트에 'position' 키를 채워넣는 함수.
+    full_text: OCR로 뽑은 전체 텍스트 (design_ocr_text)
     """
     if not full_text or not issues:
         return issues
 
-    text = full_text
-    search_start = 0  # ✅ 이전에 찾은 위치 이후부터 다시 찾기
+    text = full_text  # 그대로 쓰거나 .lower()로 바꿀 수도 있음
 
     for issue in issues:
+        # 이미 position이 있으면 건너뛰기
+        if isinstance(issue.get("position"), int):
+            continue
+
         actual = (issue.get("actual") or "").strip()
         expected = (issue.get("expected") or "").strip()
 
         pos = -1
 
-        # ✅ actual 먼저 탐색 (이전 위치 이후)
+        # 1) 우선 actual(실제 표시된 문자열) 위치 찾기
         if actual:
-            pos = text.find(actual, search_start)
+            pos = text.find(actual)
 
-        # ✅ actual로 못 찾으면 expected로 탐색
+        # 2) 못 찾으면 expected(정답)로라도 찾아보기 (선택)
         if pos == -1 and expected:
-            pos = text.find(expected, search_start)
+            pos = text.find(expected)
 
+        # 3) 그래도 못 찾으면 그냥 넘어감 (이 이슈는 하이라이트 X)
         if pos != -1:
             issue["position"] = pos
-            search_start = pos + 1  # ✅ 다음 탐색은 이 뒤에서 시작
-        else:
-            issue["position"] = -1
 
     return issues
 
@@ -1128,21 +1127,22 @@ def read_standard_excel():
 def verify_design():
     print("🕵️‍♂️ 2단계: 디자인 검증 시작...")
 
-    try:
-        # 1. 파일 받기
-        design_file = request.files.get('design_file')
-        standard_excel = request.files.get('standard_excel')
-        standard_json = request.form.get('standard_data')
+    # 1. 파일 받기
+    design_file = request.files.get('design_file')
+    standard_excel = request.files.get('standard_excel')
+    standard_json = request.form.get('standard_data')
 
-        if not design_file:
-            return jsonify({"error": "디자인 파일이 필요합니다."}), 400
+    if not design_file:
+        return jsonify({"error": "디자인 파일이 필요합니다."}), 400
 
-        design_file.seek(0)
-        if standard_excel:
-            standard_excel.seek(0)
+    # 파일 포인터 초기화
+    design_file.seek(0)
+    if standard_excel:
+        standard_excel.seek(0)
 
-        # 2. 기준 데이터 로딩 (엑셀 → JSON)
-        if standard_excel:
+    # 2. 기준 데이터 로딩 (엑셀 → JSON 변환)
+    if standard_excel:
+        try:
             df_dict = pd.read_excel(
                 io.BytesIO(standard_excel.read()),
                 sheet_name=None,
@@ -1153,61 +1153,111 @@ def verify_design():
 
             first_sheet_name = list(df_dict.keys())[0]
             first_sheet_df = df_dict[first_sheet_name]
+            standard_data = {}
 
-            ingredients_list = first_sheet_df.iloc[:, 0].dropna().astype(str).tolist()
-
-            standard_data = {
-                "ingredients": {
-                    "structured_list": ingredients_list,
-                    "continuous_text": ", ".join(ingredients_list)
+            if not first_sheet_df.empty:
+                col = first_sheet_df.columns[0]
+                if '원재료명' in first_sheet_df.columns:
+                    col = '원재료명'
+                ingredients_list = first_sheet_df[col].dropna().astype(str).tolist()
+                standard_data = {
+                    'ingredients': {
+                        'structured_list': ingredients_list,
+                        'continuous_text': ', '.join(ingredients_list)
+                    }
                 }
-            }
 
             standard_json = json.dumps(standard_data, ensure_ascii=False)
 
-        # 3. 법령 텍스트 로딩
-        law_text = ""
-        for file_path in glob.glob("law_*.txt"):
-            with open(file_path, "r", encoding="utf-8") as f:
-                law_text += f.read()
+        except Exception as e:
+            return jsonify({"error": f"엑셀 읽기 실패: {str(e)}"}), 400
 
-        # 4. ✅ OCR 안정화 (최대 3회)
+    # 3. 법령 텍스트 로딩
+    law_text = ""
+    all_law_files = glob.glob('law_*.txt')
+    print(f"📚 법령 파일 로딩 중: {len(all_law_files)}개 발견")
+
+    for file_path in all_law_files:
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                law_text += f"\n\n=== [참고 법령: {file_path}] ===\n{content}\n==========================\n"
+        except Exception as e:
+            print(f"⚠️ 법령 파일 읽기 실패 ({file_path}): {e}")
+
+    # 4. ✅ OCR 안정화 실행 (최소 3회 재시도 + JSON 복구)
+    forced_design_text = ""
+    ocr_errors = []
+
+    for attempt in range(1, 4):
+        try:
+        print(f"🔄 OCR 시도 {attempt}/3")
+
+        design_file.seek(0)
+
+        ocr_parts = [
+            PROMPT_EXTRACT_RAW_TEXT,
+            process_file_to_part(design_file)
+            ]
+
+        ocr_model = genai.GenerativeModel(
+            MODEL_NAME,
+            generation_config={
+                "temperature": 0.0,
+                "top_k": 1,
+                "top_p": 1.0,
+                "response_mime_type": "application/json",
+                "max_output_tokens": 8192
+            }
+        )
+
+        ocr_response = ocr_model.generate_content(ocr_parts)
+
+        raw_text = ocr_response.text.strip()
+        print(f"✅ OCR 원문 ({attempt}회):", raw_text[:200])
+
+        # ✅ 코드블록 제거
+        if raw_text.startswith("```"):
+            raw_text = raw_text.split("```")[1].strip()
+            if raw_text.startswith("json"):
+                raw_text = raw_text[4:].strip()
+
+        # ✅ JSON 파싱
+        ocr_json = json.loads(raw_text)
+
+        forced_design_text = ocr_json.get("raw_text", "").strip()
+
+        if forced_design_text:
+            print(f"✅ OCR 성공 ({attempt}회) - 글자수: {len(forced_design_text)}")
+            break
+        else:
+            raise ValueError("raw_text 비어 있음")
+
+    except Exception as e:
+        error_msg = f"OCR {attempt}회 실패: {e}"
+        print("⚠️", error_msg)
+        ocr_errors.append(error_msg)
         forced_design_text = ""
-        for attempt in range(3):
-            try:
-                design_file.seek(0)
+        continue
 
-                ocr_parts = [
-                    PROMPT_EXTRACT_RAW_TEXT,
-                    process_file_to_part(design_file)
-                ]
+# ✅ 최종 실패 대비 안전 장치
+if not forced_design_text:
+    forced_design_text = "[OCR 실패] 이미지에서 텍스트를 정상적으로 추출하지 못했습니다."
+    print("❌ OCR 최종 실패 - 모든 시도 실패")
+    for err in ocr_errors:
+        print(" -", err)
 
-                ocr_model = genai.GenerativeModel(MODEL_NAME)
-                ocr_response = ocr_model.generate_content(ocr_parts)
 
-                raw_text = ocr_response.text.strip()
-                if raw_text.startswith("```"):
-                    raw_text = raw_text.replace("```", "").replace("json", "").strip()
 
-                ocr_json = json.loads(raw_text)
-                forced_design_text = ocr_json.get("raw_text", "").strip()
-
-                if forced_design_text:
-                    break
-
-            except:
-                continue
-
-        if not forced_design_text:
-            forced_design_text = "[OCR 실패]"
-
-        # ✅ ✅ ✅ 프롬프트 구성 (법령 포함 + 절대규칙 포함)
-        parts = [f"""
+    
+    # 5. ⭐ AI 프롬프트 조립
+    parts = [f"""
 🚨🚨🚨 절대 규칙 🚨🚨🚨
-- 띄어쓰기 중요
-- 숫자 그대로
-- 오타 그대로 유지
-- 절대 추측 금지
+🚨 절대 규칙: 이미지와 Standard를 정확히 비교하세요!
+- 띄어쓰기 중요: "16 g" ≠ "16g"
+- 숫자 그대로: "221%" → "221%"
+- 오타 그대로: "전반가공품" → "전반가공품"
+- 추측 금지
 
 {PROMPT_VERIFY_DESIGN}
 
@@ -1217,39 +1267,66 @@ def verify_design():
 [기준 데이터]
 {standard_json}
 
-[디자인 OCR]
+[디자인 OCR (강제 추출 결과)]
 {forced_design_text}
 """]
 
-        parts.append(process_file_to_part(design_file))
+    # 실제 이미지도 AI에게 전달
+    parts.append(process_file_to_part(design_file))
 
-        # 5. Gemini 호출
-        model = genai.GenerativeModel(MODEL_NAME)
+    # 6. AI 호출
+    try:
+        generation_config = {
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "top_k": 1,
+            "candidate_count": 1,
+            "max_output_tokens": 32768,
+            "response_mime_type": "application/json"
+        }
+
+        system_instruction = """
+        당신은 정밀한 OCR 및 검증 AI입니다.
+        이미지의 모든 글자를 똑같이 비교하고 문자 1개라도 다르면 오류로 기록하세요.
+        """
+
+        model = genai.GenerativeModel(
+            MODEL_NAME,
+            generation_config=generation_config,
+            system_instruction=system_instruction
+        )
+
         response = model.generate_content(parts)
         result_text = response.text.strip()
 
-        match = re.search(r"(\{.*\})", result_text, re.DOTALL)
-        if not match:
-            return jsonify({"error": "Gemini JSON 파싱 실패"}), 500
+        # JSON 추출
+        json_match = re.search(r"(\{.*\})", result_text, re.DOTALL)
 
-        json_obj = json.loads(match.group(1))
+        if json_match:
+            clean_json = json_match.group(1)
+            clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
 
-        # ✅ ✅ ✅ 프론트 필드 강제 주입 (가장 중요)
-        json_obj["design_ocr_text"] = forced_design_text
-        if "issues" not in json_obj or not isinstance(json_obj["issues"], list):
-            json_obj["issues"] = []
+            json_obj = json.loads(clean_json)
 
-        # ✅ 하이라이트 위치 계산
-        issues = add_issue_positions(json_obj["issues"], forced_design_text)
+        else:
+            clean_json = result_text.replace("```", "").strip()
+            json_obj = json.loads(clean_json)
+
+        # 7. 하이라이트 위치 계산 (position 추가)
+        design_text = json_obj.get("design_ocr_text", "")
+        issues = json_obj.get("issues", [])
+
+        issues = add_issue_positions(issues, design_text)
         json_obj["issues"] = issues
 
         return jsonify(json_obj)
 
     except Exception as e:
-        print("❌ verify_design 오류:", e)
+        print(f"❌ 검증 오류: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
 
 
 @app.route('/api/verify-design-strict', methods=['POST'])
