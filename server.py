@@ -1141,7 +1141,7 @@ def verify_design():
         if standard_excel:
             standard_excel.seek(0)
 
-        # 2. 기준 데이터 로딩
+        # 2. 기준 데이터 로딩 (엑셀 → JSON)
         if standard_excel:
             df_dict = pd.read_excel(
                 io.BytesIO(standard_excel.read()),
@@ -1154,69 +1154,58 @@ def verify_design():
             first_sheet_name = list(df_dict.keys())[0]
             first_sheet_df = df_dict[first_sheet_name]
 
-            col = first_sheet_df.columns[0]
-            if '원재료명' in first_sheet_df.columns:
-                col = '원재료명'
+            ingredients_list = first_sheet_df.iloc[:, 0].dropna().astype(str).tolist()
 
-            ingredients_list = first_sheet_df[col].dropna().astype(str).tolist()
-
-            standard_json = json.dumps({
+            standard_data = {
                 "ingredients": {
                     "structured_list": ingredients_list,
                     "continuous_text": ", ".join(ingredients_list)
                 }
-            }, ensure_ascii=False)
+            }
 
-        # 3. 법령 텍스트
+            standard_json = json.dumps(standard_data, ensure_ascii=False)
+
+        # 3. 법령 텍스트 로딩
         law_text = ""
-        for file_path in glob.glob('law_*.txt'):
-            with open(file_path, 'r', encoding='utf-8') as f:
+        for file_path in glob.glob("law_*.txt"):
+            with open(file_path, "r", encoding="utf-8") as f:
                 law_text += f.read()
 
-        # 4. OCR 강제 추출
+        # 4. ✅ OCR 안정화 (최대 3회)
         forced_design_text = ""
+        for attempt in range(3):
+            try:
+                design_file.seek(0)
 
-        for _ in range(3):
-            design_file.seek(0)
+                ocr_parts = [
+                    PROMPT_EXTRACT_RAW_TEXT,
+                    process_file_to_part(design_file)
+                ]
 
-            ocr_parts = [
-                PROMPT_EXTRACT_RAW_TEXT,
-                process_file_to_part(design_file)
-            ]
+                ocr_model = genai.GenerativeModel(MODEL_NAME)
+                ocr_response = ocr_model.generate_content(ocr_parts)
 
-            ocr_model = genai.GenerativeModel(
-                MODEL_NAME,
-                generation_config={
-                    "temperature": 0.0,
-                    "top_k": 1,
-                    "top_p": 1.0,
-                    "response_mime_type": "application/json",
-                    "max_output_tokens": 8192
-                }
-            )
+                raw_text = ocr_response.text.strip()
+                if raw_text.startswith("```"):
+                    raw_text = raw_text.replace("```", "").replace("json", "").strip()
 
-            ocr_response = ocr_model.generate_content(ocr_parts)
-            raw_text = ocr_response.text.strip()
+                ocr_json = json.loads(raw_text)
+                forced_design_text = ocr_json.get("raw_text", "").strip()
 
-            if raw_text.startswith("```"):
-                raw_text = raw_text.split("```")[1].strip()
-                if raw_text.startswith("json"):
-                    raw_text = raw_text[4:].strip()
+                if forced_design_text:
+                    break
 
-            ocr_json = json.loads(raw_text)
-            forced_design_text = ocr_json.get("raw_text", "").strip()
-
-            if forced_design_text:
-                break
+            except:
+                continue
 
         if not forced_design_text:
             forced_design_text = "[OCR 실패]"
 
-        # ✅ Gemini 프롬프트 (법령 포함)
+        # ✅ ✅ ✅ 프롬프트 구성 (법령 포함 + 절대규칙 포함)
         parts = [f"""
 🚨🚨🚨 절대 규칙 🚨🚨🚨
-- 띄어쓰기 중요: "16 g" ≠ "16g"
-- 숫자 그대로 유지
+- 띄어쓰기 중요
+- 숫자 그대로
 - 오타 그대로 유지
 - 절대 추측 금지
 
@@ -1237,50 +1226,31 @@ def verify_design():
         # 5. Gemini 호출
         model = genai.GenerativeModel(MODEL_NAME)
         response = model.generate_content(parts)
-
         result_text = response.text.strip()
 
         match = re.search(r"(\{.*\})", result_text, re.DOTALL)
         if not match:
-            return jsonify({"error": "Gemini 응답 JSON 없음"}), 500
+            return jsonify({"error": "Gemini JSON 파싱 실패"}), 500
 
         json_obj = json.loads(match.group(1))
 
-        # ✅ ✅ ✅ 프론트 필드 강제 주입 (OCR 원문)
-json_obj["design_ocr_text"] = forced_design_text
+        # ✅ ✅ ✅ 프론트 필드 강제 주입 (가장 중요)
+        json_obj["design_ocr_text"] = forced_design_text
+        if "issues" not in json_obj or not isinstance(json_obj["issues"], list):
+            json_obj["issues"] = []
 
-if "issues" not in json_obj or not isinstance(json_obj["issues"], list):
-    json_obj["issues"] = []
+        # ✅ 하이라이트 위치 계산
+        issues = add_issue_positions(json_obj["issues"], forced_design_text)
+        json_obj["issues"] = issues
 
-# ✅ 하이라이트 위치 계산
-issues = add_issue_positions(json_obj["issues"], forced_design_text)
-json_obj["issues"] = issues
+        return jsonify(json_obj)
 
-# ✅ ✅ ✅ ✅ ✅ 핵심: 하이라이트 HTML 생성
-highlight_html = forced_design_text
+    except Exception as e:
+        print("❌ verify_design 오류:", e)
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
-for issue in sorted(json_obj["issues"], key=lambda x: x.get("position", -1), reverse=True):
-    pos = issue.get("position")
-
-    if isinstance(pos, int) and 0 <= pos < len(highlight_html):
-        wrong_char = highlight_html[pos]
-        expected = issue.get("expected", "")
-
-        span = (
-            f"<span style='background:#ffe6e6; color:#d32f2f; font-weight:bold;' "
-            f"title='정답: {expected}'>{wrong_char}</span>"
-        )
-
-        highlight_html = (
-            highlight_html[:pos]
-            + span
-            + highlight_html[pos + 1:]
-        )
-
-# ✅ ✅ ✅ 프론트에서 직접 쓰는 필드 (이게 없어서 계속 안 떴던 거임)
-json_obj["design_ocr_highlighted_html"] = highlight_html
-
-return jsonify(json_obj)
 
 
 
