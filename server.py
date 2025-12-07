@@ -1230,23 +1230,17 @@ for attempt in range(1, 4):
         forced_design_text = ocr_json.get("raw_text", "").strip()
 
         if forced_design_text:
-            print(f"✅ OCR 성공 ({attempt}회) - 글자수: {len(forced_design_text)}")
+            print(f"✅ OCR 성공 ({attempt}회)")
             break
         else:
             raise ValueError("raw_text 비어 있음")
 
     except Exception as e:
-        err = f"OCR {attempt}회 실패: {e}"
-        print("⚠️", err)
         ocr_errors.append(err)
 
 # ✅ 최종 실패 대비 안전장치
 if not forced_design_text:
     forced_design_text = "[OCR 실패] 이미지에서 텍스트를 정상적으로 추출하지 못했습니다."
-    print("❌ OCR 최종 실패")
-    for err in ocr_errors:
-        print(" -", err)
-
 
     
     # 5. ⭐ AI 프롬프트 조립
@@ -1271,76 +1265,48 @@ if not forced_design_text:
 """]
 
     # 실제 이미지도 AI에게 전달
-    parts.append(process_file_to_part(design_file))
+   parts.append(process_file_to_part(design_file))
 
-    # 6. AI 호출
-    try:
-        generation_config = {
-            "temperature": 0.0,
-            "top_p": 1.0,
-            "top_k": 1,
-            "candidate_count": 1,
-            "max_output_tokens": 32768,
-            "response_mime_type": "application/json"
-        }
+    model = genai.GenerativeModel(MODEL_NAME)
+    response = model.generate_content(parts)
 
-        system_instruction = """
-        당신은 정밀한 OCR 및 검증 AI입니다.
-        이미지의 모든 글자를 똑같이 비교하고 문자 1개라도 다르면 오류로 기록하세요.
-        """
+    result_text = response.text.strip()
 
-        model = genai.GenerativeModel(
-            MODEL_NAME,
-            generation_config=generation_config,
-            system_instruction=system_instruction
-        )
+    json_obj = json.loads(
+        re.search(r"(\{.*\})", result_text, re.DOTALL).group(1)
+    )
 
-        response = model.generate_content(parts)
-        result_text = response.text.strip()
-
-        # JSON 추출
-        json_match = re.search(r"(\{.*\})", result_text, re.DOTALL)
-
-        if json_match:
-            clean_json = json_match.group(1)
-            clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
-
-            json_obj = json.loads(clean_json)
-
-        else:
-            clean_json = result_text.replace("```", "").strip()
-            json_obj = json.loads(clean_json)
-
-        # 7. 하이라이트 위치 계산 (position 추가)
-        design_text = json_obj.get("design_ocr_text", "")
-        issues = json_obj.get("issues", [])
-
-        issues = add_issue_positions(issues, design_text)
-        json_obj["issues"] = issues
-
-        # ✅ design_ocr_highlighted_html 생성 (Streamlit용)
-        highlight_html = design_text
-
-        # position 기준으로 뒤에서부터 span 삽입 (인덱스 깨짐 방지)
-        for issue in sorted(issues, key=lambda x: x.get("position", -1), reverse=True):
-    pos = issue.get("position")
-
-    if isinstance(pos, int) and 0 <= pos < len(highlight_html):
-        wrong_char = highlight_html[pos]
-        expected = issue.get("expected", "")
-
-        span = f"<span style='background:#ffe6e6; color:#d32f2f; font-weight:bold;' title='정답: {expected}'>{wrong_char}</span>"
-
-        highlight_html = (
-            highlight_html[:pos]
-            + span
-            + highlight_html[pos + 1 :]
-        )
+    # ✅ OCR 원문을 응답에 강제 삽입 (이게 제일 중요)
+    json_obj["design_ocr_text"] = forced_design_text
 
 
-json_obj["design_ocr_highlighted_html"] = highlight_html
+    # 7. ✅ 하이라이트 위치 계산
+    design_text = forced_design_text
+    issues = json_obj.get("issues", [])
 
-        return jsonify(json_obj)
+    issues = add_issue_positions(issues, design_text)
+    json_obj["issues"] = issues
+
+    highlight_html = design_text
+
+    for issue in sorted(issues, key=lambda x: x.get("position", -1), reverse=True):
+        pos = issue.get("position")
+
+        if isinstance(pos, int) and 0 <= pos < len(highlight_html):
+            wrong_char = highlight_html[pos]
+            expected = issue.get("expected", "")
+
+            span = f"<span style='background:#ffe6e6; color:#d32f2f; font-weight:bold;' title='정답: {expected}'>{wrong_char}</span>"
+
+            highlight_html = (
+                highlight_html[:pos]
+                + span
+                + highlight_html[pos + 1:]
+            )
+
+    json_obj["design_ocr_highlighted_html"] = highlight_html
+
+    return jsonify(json_obj)
 
     except Exception as e:
         print(f"❌ 검증 오류: {e}")
