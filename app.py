@@ -16,7 +16,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # Flask 서버 주소 (Render)
 # -----------------------------
 FLASK_API_URL = "https://food-label-app-4.onrender.com"  # Render에 만든 Flask 서버 URL
-
+ 
 # -----------------------------
 # Streamlit 기본 설정
 # -----------------------------
@@ -145,9 +145,14 @@ def show_main_app():
                     else:
                         if response.status_code == 200:
                             result = response.json()
+
+                            # ✅✅✅ 이 줄이 지금까지 없어서 전부 깨졌던 거다
+                            st.session_state["standard_result"] = result
+
                             st.success("분석 완료!")
                             st.subheader("📌 생성된 식품표시 기준 데이터 (JSON)")
                             st.json(result)
+
                         else:
                             st.error("서버에서 오류가 발생했습니다.")
                             st.write("상태 코드:", response.status_code)
@@ -165,36 +170,45 @@ def show_main_app():
         )
 
         if st.button("결과 확인하기"):
+
+            # ✅✅✅ 기준 데이터 없으면 서버 요청 자체 차단
+            if "standard_result" not in st.session_state:
+                st.error("⚠️ 먼저 [자동 변환]에서 기준 데이터를 생성해야 합니다.")
+                return
+
             if not design_file:
                 st.error("디자인 파일을 업로드하세요.")
-            else:
-                files = {
-                    "design_file": (
-                        design_file.name,
-                        design_file.read(),
-                        design_file.type,
-                    )
-                }
-                if standard_excel:
-                    files["standard_excel"] = (
-                        standard_excel.name,
-                        standard_excel.read(),
-                        standard_excel.type,
-                    )
+                return
 
-                with st.spinner("디자인과 기준 데이터를 비교 중입니다..."):
-                    try:
-                        response = requests.post(
-                             f"{FLASK_API_URL}/api/verify-design-strict",
-                             files=files,
-                             data={
-                                 "standard_data": json.dumps(
-                                    st.session_state.get("standard_result"), 
-                                    ensure_ascii=False
-                                   )
-                                },
-                                timeout=600,
-                            )
+            files = {
+                 "design_file": (
+                    design_file.name,
+                    design_file.read(),
+                    design_file.type,
+              )
+         }
+
+        if standard_excel:
+            files["standard_excel"] = (
+                standard_excel.name,
+                standard_excel.read(),
+                standard_excel.type,
+           )
+
+    with st.spinner("디자인과 기준 데이터를 비교 중입니다..."):
+        try:
+            response = requests.post(
+                f"{FLASK_API_URL}/api/verify-design-strict",
+                files=files,
+                data={
+                    "standard_data": json.dumps(
+                        st.session_state["standard_result"],
+                        ensure_ascii=False
+                    )
+                },
+                timeout=600,
+            )
+
 
 
                     except Exception as e:
