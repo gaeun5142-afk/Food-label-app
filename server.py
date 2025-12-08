@@ -563,7 +563,7 @@ def create_standard():
     # (1) 프롬프트 + 법령 정보
     enhanced_prompt = PROMPT_CREATE_STANDARD
     if ALL_LAW_TEXT:
-        enhanced_prompt += f"\n\n--- [참고 법령] ---\n{ALL_LAW_TEXT}\n--- [법령 끝] ---\n"
+        enhanced_prompt += f"\n\n--- [참고 법령] ---\n{ALL_LAW_TEXT[:12000]}\n--- [법령 끝] ---\n"
     parts.append(enhanced_prompt)
 
     # (2) 엑셀 데이터
@@ -760,14 +760,18 @@ def verify_design():
             clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
 
             result = json.loads(clean_json)
+            cleaned_issues = []
             for issue in result.get("issues", []):
                 expected = issue.get("expected")
                 actual = issue.get("actual")
 
                 if expected and actual:
                     if normalize_number(expected) == normalize_number(actual):
-                       issue["type"] = "Minor"
-                       issue["issue"] = "표기 형식만 다르고 수치는 동일함 (자동 보정)"
+                        continue 
+                        
+                    cleaned_issues.append(issue)
+
+                result["issues"] = cleaned_issues
 
         except Exception as e:
             print("❌ JSON 파싱 실패:", e)
@@ -775,7 +779,7 @@ def verify_design():
             return jsonify({
                 "error": "AI JSON 파싱 실패",
                 "raw_ai_text": result_text[:1000]
-            }), 500
+            }), 200
 
         # -----------------------------
         # ✅ ✅ ✅ 위반 상세 HTML 완전 제거
@@ -800,15 +804,6 @@ def verify_design():
             "error": f"서버 내부 오류: {str(e)}"
         }), 500
 
-
-
-    except Exception as e:
-        # 위에서 예상 못 한 모든 예외는 여기로
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            "error": f"서버 내부 오류가 발생했습니다: {str(e)}"
-        }), 500
 
 # QA 자료 업로드 및 식품표시사항 작성 API
 @app.route('/api/upload-qa', methods=['POST'])
@@ -854,7 +849,7 @@ def upload_qa():
     
     # 법령 정보 추가
     if ALL_LAW_TEXT:
-        qa_prompt += f"\n\n--- [참고 법령] ---\n{ALL_LAW_TEXT}\n--- [법령 끝] ---\n"
+        qa_prompt += f"\n\n--- [참고 법령] ---\n{ALL_LAW_TEXT[:12000]}\n--- [법령 끝] ---\n"
     
     parts.append(qa_prompt)
     
