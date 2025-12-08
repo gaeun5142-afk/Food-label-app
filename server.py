@@ -633,144 +633,108 @@ def verify_design():
         # 2. 기준 데이터 로딩 (엑셀 -> JSON)
         # -----------------------------
         if standard_excel:
-            try:
-                df_dict = pd.read_excel(
-                    io.BytesIO(standard_excel.read()),
-                    sheet_name=None,
-                    engine='openpyxl'
+            df_dict = pd.read_excel(
+                io.BytesIO(standard_excel.read()),
+                sheet_name=None,
+                engine='openpyxl'
+            )
+
+            first_sheet_df = list(df_dict.values())[0]
+
+            ingredients_list = []
+            if '원재료명' in first_sheet_df.columns:
+                ingredients_list = (
+                    first_sheet_df['원재료명']
+                    .dropna()
+                    .astype(str)
+                    .tolist()
                 )
 
-                first_sheet_name = list(df_dict.keys())[0]
-                first_sheet_df = df_dict[first_sheet_name]
+            standard_data = {
+                'ingredients': {
+                    'structured_list': ingredients_list,
+                    'continuous_text': ', '.join(ingredients_list)
+                }
+            }
 
-                standard_data = {}
-                if not first_sheet_df.empty:
-                    col = first_sheet_df.columns[0]
-                    if '원재료명' in first_sheet_df.columns:
-                        col = '원재료명'
-
-                    ingredients_list = (
-                        first_sheet_df[col]
-                        .dropna()
-                        .astype(str)
-                        .tolist()
-                    )
-
-                    standard_data = {
-                        'ingredients': {
-                            'structured_list': ingredients_list,
-                            'continuous_text': ', '.join(ingredients_list)
-                        }
-                    }
-
-                standard_json = json.dumps(
-                    standard_data,
-                    ensure_ascii=False
-                )
-
-            except Exception as e:
-                # 엑셀 읽기 실패해도 명확한 에러 메시지 주기
-                print("❌ 엑셀 읽기 실패:", e)
-                return jsonify({
-                    "error": f"엑셀 파일을 읽는 중 오류가 발생했습니다: {str(e)}"
-                }), 400
+            standard_json = json.dumps(standard_data, ensure_ascii=False)
 
         # -----------------------------
-        # 3. 법령 텍스트 읽기
-        # -----------------------------
-        law_text = ""
-        # law_text_*.txt 파일들
-        for fpath in glob.glob('law_text_*.txt'):
-            try:
-                with open(fpath, 'r', encoding='utf-8') as f:
-                    law_text += f.read() + "\n"
-            except Exception as e:
-                print(f"⚠️ 법령 파일 읽기 실패 ({fpath}):", e)
-
-        # law_context.txt (있으면 사용, 없으면 그냥 넘어감)
-        try:
-            with open('law_context.txt', 'r', encoding='utf-8') as f:
-                law_text = f.read() + "\n" + law_text
-        except FileNotFoundError:
-            print("⚠️ law_context.txt 파일이 없습니다. (무시하고 진행)")
-        except Exception as e:
-            print("⚠️ law_context.txt 읽기 실패:", e)
-
-        # -----------------------------
-        # 4. 프롬프트 조합
+        # 3. 프롬프트 조합
         # -----------------------------
         full_prompt = f"""
-        {PROMPT_VERIFY_DESIGN}
+{PROMPT_VERIFY_DESIGN}
 
-        [참고 법령]
-        {law_text[:60000]}
-
-        [기준 데이터(JSON)]
-        {standard_json}
-        """
+[기준 데이터(JSON)]
+{standard_json}
+"""
 
         parts = [full_prompt]
 
-        # 디자인 파일을 Gemini가 이해할 수 있는 Part로 변환
         design_file.stream.seek(0)
         design_part = process_file_to_part(design_file)
         if design_part:
             parts.append(design_part)
         else:
-            return jsonify({"error": "디자인 파일을 처리할 수 없습니다."}), 400
+            return jsonify({"error": "디자인 파일 처리 실패"}), 400
 
         # -----------------------------
-        # 5. Gemini 호출
+        # 4. Gemini 호출
         # -----------------------------
-        if not GOOGLE_API_KEY:
+        model = genai.GenerativeModel(
+            MODEL_NAME,
+            generation_config={"temperature": 0.0}
+        )
+
+        response = model.generate_content(parts)
+        result_text = response.text.strip()
+
+        # -----------------------------
+        # 5. ✅ JSON 안전 파싱 + 502 방지
+        # -----------------------------
+        try:
+            json_match = re.search(r"(\{.*\})", result_text, re.DOTALL)
+
+            if json_match:
+                clean_json = json_match.group(1)
+            else:
+                clean_json = result_text.replace("```", "").strip()
+
+            clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
+
+            result = json.loads(clean_json)
+
+        except Exception as e:
+            print("❌ JSON 파싱 실패:", e)
+            print("❌ 원본 응답:", result_text[:1000])
             return jsonify({
-                "error": "GOOGLE_API_KEY 환경변수가 설정되어 있지 않습니다."
+                "error": "AI JSON 파싱 실패",
+                "raw_ai_text": result_text[:1000]
             }), 500
 
-        try:
-            model = genai.GenerativeModel(
-                MODEL_NAME,
-                generation_config={"temperature": 0.0}
-            )
-            response = model.generate_content(parts)
-            result_text = response.text.strip()
+        # -----------------------------
+        # ✅ ✅ ✅ 위반 상세 HTML 완전 제거
+        # -----------------------------
+        if "law_compliance" in result:
+            result["law_compliance"]["violations"] = []
 
-           # ✅ ✅ ✅ JSON 안전 파싱 (502 방지)
-try:
-    json_match = re.search(r"(\{.*\})", result_text, re.DOTALL)
+        # -----------------------------
+        # ✅ ✅ ✅ 하이라이트 HTML 생성
+        # -----------------------------
+        design_text = result.get("design_ocr_text", "")
+        issues = result.get("issues", [])
+        highlighted_html = make_highlighted_html(design_text, issues)
+        result["design_ocr_highlighted_html"] = highlighted_html
 
-    if json_match:
-        clean_json = json_match.group(1)
-    else:
-        clean_json = result_text.replace("```", "").strip()
+        return jsonify(result)
 
-    # 흔한 마지막 쉼표 오류 보정
-    clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "error": f"서버 내부 오류: {str(e)}"
+        }), 500
 
-    result = json.loads(clean_json)
-
-    # ✅ ✅ ✅ [여기서 바로 위반 상세 HTML 제거]
-    if "law_compliance" in result:
-        result["law_compliance"]["violations"] = []
-
-    # ✅ ✅ ✅ 하이라이트 HTML 생성
-    design_text = result.get("design_ocr_text", "")
-    issues = result.get("issues", [])
-    highlighted_html = make_highlighted_html(design_text, issues)
-    result["design_ocr_highlighted_html"] = highlighted_html
-
-    return jsonify(result)
-
-except Exception as e:
-    import traceback
-    traceback.print_exc()
-    print("❌ JSON 파싱 또는 후처리 실패:", e)
-    print("❌ Gemini 원본 응답:", result_text[:2000])
-
-    return jsonify({
-        "error": "AI 응답(JSON) 파싱에 실패했습니다.",
-        "raw_ai_text": result_text[:1000]
-    }), 500
 
 
     except Exception as e:
