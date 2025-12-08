@@ -502,7 +502,7 @@ if (data.law_compliance) {
         data.issues.forEach(item => {
             let cls = 'issue-minor';
             let badge = '주의';
-            
+
             if (item.type === 'Critical') {
                 cls = 'issue-critical';
                 badge = '치명적';
@@ -511,14 +511,28 @@ if (data.law_compliance) {
                 badge = '법률 위반';
             }
 
+    // ✅✅✅ [핵심] issue 안에 들어있는 HTML 태그 완전 제거
+            const cleanIssue = item.issue
+                ? item.issue.replace(/<[^>]*>/g, "")
+                : "";
+
             let html = `
                 <div class="${cls}">
                     <div class="fw-bold">[${badge}] ${item.location}</div>
-                    <div class="my-1">${item.issue}</div>
+                    <div class="my-1">${cleanIssue}</div>
                     <small class="text-muted">
-                        정답: ${item.expected} <br>
-                        실제: ${item.actual}
-            `;
+                        정답: ${item.expected || "-"} <br>
+                        실제: ${item.actual || "-"}
+             `;
+
+            if (item.law_reference) {
+                html += `<br>관련 법령: ${item.law_reference}`;
+            }
+
+            html += `</small></div>`;
+            list.innerHTML += html;
+        });
+
             
             if (item.law_reference) {
                 html += `<br>관련 법령: ${item.law_reference}`;
