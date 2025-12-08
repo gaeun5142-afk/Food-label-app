@@ -760,22 +760,22 @@ def verify_design():
             clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
 
             result = json.loads(clean_json)
-            cleaned_issues = []
+            #cleaned_issues = []
 
-            for issue in result.get("issues", []):
-                expected = issue.get("expected")
-                actual = issue.get("actual")
+            #for issue in result.get("issues", []):
+            #   expected = issue.get("expected")
+            #    actual = issue.get("actual")
 
             # ✅ expected/actual 이 있고, 숫자가 같으면 제거
-            if expected and actual:
-                if normalize_number(expected) == normalize_number(actual):
-                    continue
+            #if expected and actual:
+             #   if normalize_number(expected) == normalize_number(actual):
+              #      continue
 
             # ✅ 여기서 무조건 append
-            cleaned_issues.append(issue)
+            #cleaned_issues.append(issue)
 
             # ✅ 반복문이 끝난 뒤에 한 번만 대입
-            result["issues"] = cleaned_issues
+            #result["issues"] = cleaned_issues
 
         except Exception as e:
             print("❌ JSON 파싱 실패:", e)
