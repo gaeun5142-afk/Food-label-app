@@ -736,16 +736,26 @@ def verify_design():
             result_text = response.text.strip()
 
             # JSON 추출
-            json_match = re.search(r"(\{.*\})", result_text, re.DOTALL)
-            if json_match:
-                clean_json = json_match.group(1)
-                clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
-                result = json.loads(clean_json)
-            else:
-                # JSON 패턴이 없으면 그냥 파싱 시도
-                clean_json = result_text.replace("```", "").strip()
-                result = json.loads(clean_json)
+            try:
+                json_match = re.search(r"(\{.*\})", result_text, re.DOTALL)
 
+                if json_match:
+                    clean_json = json_match.group(1)
+               else:
+                    clean_json = result_text.replace("```", "").strip()
+
+    # 흔한 마지막 쉼표 오류 보정
+             clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
+
+             result = json.loads(clean_json)
+
+        except Exception as e:
+            print("❌ JSON 파싱 완전 실패:", e)
+            print("❌ Gemini 원본 응답:", result_text[:2000])
+            return jsonify({
+                "error": "AI 응답(JSON) 파싱에 실패했습니다.",
+                "raw_ai_text": result_text[:1000]
+            }), 500
             # 🔴 여기서 하이라이트 HTML 생성해서 result에 추가
             design_text = result.get("design_ocr_text", "")
             issues = result.get("issues", [])
