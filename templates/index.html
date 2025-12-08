@@ -155,29 +155,33 @@
             document.getElementById('qaLabelText').innerText = data.label_text || 'N/A';
             
             // 법률 준수 상태 표시
-            const lawComplianceDiv = document.getElementById('qaLawCompliance');
-            if (data.law_compliance) {
-                const status = data.law_compliance.status;
-                let statusText = '';
-                let statusClass = '';
-                if (status === 'compliant') {
-                    statusText = '✅ 법률 준수';
-                    statusClass = 'law-status-compliant';
-                } else if (status === 'needs_review') {
-                    statusText = '⚠️ 법률 검토 필요';
-                    statusClass = 'law-status-review';
-                }
-                
-                let html = `<div class="${statusClass}">${statusText}</div>`;
-                if (data.law_compliance.issues && data.law_compliance.issues.length > 0) {
-                    html += '<ul class="mt-2">';
-                    data.law_compliance.issues.forEach(issue => {
-                        html += `<li>${issue}</li>`;
-                    });
-                    html += '</ul>';
-                }
-                lawComplianceDiv.innerHTML = html;
-            }
+            // ✅ 법률 준수 상태만 표시 (아래 위반 목록 제거됨)
+const lawComplianceDiv = document.getElementById('lawComplianceReport');
+if (data.law_compliance) {
+    const status = data.law_compliance.status;
+    let statusText = '';
+    let statusClass = '';
+
+    if (status === 'compliant') {
+        statusText = '✅ 법률 준수';
+        statusClass = 'law-status-compliant';
+    } else if (status === 'violation') {
+        statusText = '❌ 법률 위반 발견';
+        statusClass = 'law-status-violation';
+    }
+
+    let html = `
+        <div class="p-3 bg-light rounded mb-3">
+            <strong>법률 준수 상태:</strong>
+            <span class="${statusClass}">${statusText}</span>
+        </div>
+    `;
+
+    // ✅ 여기서부터 "위반 상세 리스트" 출력 완전 제거됨
+
+    lawComplianceDiv.innerHTML = html;
+}
+
             
         } catch (e) {
             alert("오류: " + e.message);
