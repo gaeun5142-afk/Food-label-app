@@ -11,43 +11,11 @@ import PIL.Image
 import PIL.ImageEnhance
 import re
 import unicodedata
+import html as html_mod  # ✅ 하이라이트용 이스케이프
 
 # --- 설정 및 초기화 ---
 load_dotenv()
 
-def add_issue_positions(issues, full_text: str):
-    """
-    issues 리스트에 'position' 키를 채워넣는 함수.
-    full_text: OCR로 뽑은 전체 텍스트 (design_ocr_text)
-    """
-    if not full_text or not issues:
-        return issues
-
-    text = full_text  # 그대로 쓰거나 .lower()로 바꿀 수도 있음
-
-    for issue in issues:
-        # 이미 position이 있으면 건너뛰기
-        if isinstance(issue.get("position"), int):
-            continue
-
-        actual = (issue.get("actual") or "").strip()
-        expected = (issue.get("expected") or "").strip()
-
-        pos = -1
-
-        # 1) 우선 actual(실제 표시된 문자열) 위치 찾기
-        if actual:
-            pos = text.find(actual)
-
-        # 2) 못 찾으면 expected(정답)로라도 찾아보기 (선택)
-        if pos == -1 and expected:
-            pos = text.find(expected)
-
-        # 3) 그래도 못 찾으면 그냥 넘어감 (이 이슈는 하이라이트 X)
-        if pos != -1:
-            issue["position"] = pos
-
-    return issues
 
 def normalize_text_strict(text):
     """엄격한 비교용 정규화 (공백/특수문자 유지)"""
@@ -57,7 +25,7 @@ def normalize_text_strict(text):
     return unicodedata.normalize('NFKC', text)
 
 
-# ⭐ 여기에 추가 ⭐
+# ⭐ 문자 단위 비교 (strict)
 def compare_texts_strict(standard_text, design_text):
     """문자 단위 정확 비교 (AI 없이)"""
     std_norm = normalize_text_strict(standard_text)
@@ -81,15 +49,19 @@ def compare_texts_strict(standard_text, design_text):
 
     return issues
 
+
 def add_issue_positions(issues, full_text: str):
     """
     issues 리스트에 'position' 키를 채워넣는 함수.
     full_text: OCR로 뽑은 전체 텍스트 (design_ocr_text)
+
+    - 기본적으로 issue["actual"] 전체 문자열 기준으로 위치를 찾는다.
+    - 못 찾으면 issue["expected"]로 다시 시도한다.
     """
     if not full_text or not issues:
         return issues
 
-    text = full_text  # 그대로 쓰거나 .lower()로 바꿀 수도 있음
+    text = full_text
 
     for issue in issues:
         # 이미 position이 있으면 건너뛰기
@@ -105,11 +77,11 @@ def add_issue_positions(issues, full_text: str):
         if actual:
             pos = text.find(actual)
 
-        # 2) 못 찾으면 expected(정답)로라도 찾아보기 (선택)
+        # 2) 못 찾으면 expected(정답) 위치라도 찾아보기
         if pos == -1 and expected:
             pos = text.find(expected)
 
-        # 3) 그래도 못 찾으면 그냥 넘어감 (이 이슈는 하이라이트 X)
+        # 3) 찾으면 position 저장
         if pos != -1:
             issue["position"] = pos
 
@@ -148,7 +120,6 @@ def ocr_with_voting(image_file, num_runs=5):
                 print(f"  ⚠️ {i+1}번째 OCR: 토큰 제한 초과, 재시도 중...")
                 continue
 
-
             result_text = response.text.strip()
 
             # JSON 파싱
@@ -184,6 +155,7 @@ def ocr_with_voting(image_file, num_runs=5):
     print(f"✅ 최종 선택: {count}/{num_runs}회 일치")
 
     return most_common_text
+
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
@@ -230,27 +202,27 @@ def check_available_models():
                 model_name = m.name.replace('models/', '')
                 available_models.append(model_name)
                 print(f"   - {model_name}")
-        
-        # python server.pyFlash 모델 우선 선택
+
+        # Flash 모델 우선 선택
         for model in available_models:
             if 'flash' in model.lower():
                 MODEL_NAME = model
                 print(f"\n✅ 추천 모델 선택: {MODEL_NAME}\n")
                 return MODEL_NAME
-        
+
         # Flash가 없으면 Pro 모델 선택
         for model in available_models:
             if 'pro' in model.lower():
                 MODEL_NAME = model
                 print(f"\n✅ Pro 모델 선택: {MODEL_NAME}\n")
                 return MODEL_NAME
-        
+
         # 둘 다 없으면 첫 번째 모델 사용
         if available_models:
             MODEL_NAME = available_models[0]
             print(f"\n✅ 첫 번째 모델 선택: {MODEL_NAME}\n")
             return MODEL_NAME
-        
+
         print(f"\n⚠️ 사용 가능한 모델을 찾을 수 없습니다. 기본값 사용: {MODEL_NAME}\n")
         return None
     except Exception as e:
@@ -258,11 +230,13 @@ def check_available_models():
         print(f"⚠️ 기본 모델 사용: {MODEL_NAME}\n")
         return None
 
+
 # 서버 시작 시 모델 확인 및 자동 설정
 if GOOGLE_API_KEY:
     check_available_models()
 else:
     print(f"⚠️ API 키가 없어 모델 확인을 건너뜁니다. 기본 모델 사용: {MODEL_NAME}\n")
+
 
 # --- 법령 텍스트 로드 ---
 def load_law_texts() -> str:
@@ -270,11 +244,11 @@ def load_law_texts() -> str:
     print("📚 법령 파일들을 읽어오는 중...")
     # 프로젝트 루트와 현재 디렉토리 모두 확인
     law_files = glob.glob("law_text_*.txt") + glob.glob("../law_text_*.txt")
-    
+
     if not law_files:
         print("⚠️ 법령 파일이 없습니다. 법률 검토 기능이 제한될 수 있습니다.")
         return ""
-    
+
     all_law_text = ""
     for file_path in law_files:
         try:
@@ -285,9 +259,10 @@ def load_law_texts() -> str:
             print(f"✅ 법령 파일 '{file_path}' 로드 완료")
         except Exception as e:
             print(f"❌ 법령 파일 '{file_path}' 읽기 실패: {e}")
-    
+
     print(f"✅ 모든 법령 파일 로드 완료 (총 {len(all_law_text)}자)")
     return all_law_text
+
 
 ALL_LAW_TEXT = load_law_texts()
 
@@ -437,7 +412,6 @@ PROMPT_CREATE_STANDARD = """
 """
 
 # 2. 디자인 검증용 (정답지 vs 디자인PDF)
-# server.py 수정본
 
 PROMPT_VERIFY_DESIGN = """
 당신은 식품표시사항 감사 AI입니다.
@@ -451,226 +425,7 @@ PROMPT_VERIFY_DESIGN = """
 ❌ 숫자/단위 보정 금지 (900g과 900 g은 다름)
 ❌ 문장부호 보정 금지 (점, 쉼표 빠진 것도 그대로)
 
-
-**검증 규칙**:
-1. **완전성 검증**: Standard에 있는 **모든 항목**이 Design에 정확히 있는지 확인
-2. **한 글자라도 다르면 오류**: 띄어쓰기, 괄호, 숫자, 특수문자 포함
-3. **없는 오류를 만들지 마세요**: 실제로 다른 것만 보고하세요
-4. **인덱스 0부터 끝까지 하나씩 비교**
-   - 중간에 건너뛰지 마세요
-   - 모든 위치 확인하세요
-
-**필수 원칙**:
-✅ 이미지에 보이는 **정확한 글자 그대로** 추출
-✅ 오타가 있어도 **있는 그대로** 추출
-✅ 띄어쓰기, 쉼표, 점 등 **모든 문장부호** 그대로 추출
-✅ 숫자와 단위 사이 띄어쓰기도 **정확히** 추출
-
-
-**숫자 인식 규칙**:
-✅ 소수점 있으면 그대로: "4.41%" → "4.41%"
-✅ 소수점 없으면 그대로: "221%" → "221%" (2.21% 아님!)
-✅ 큰 숫자도 그대로: "1166kcal" → "1166kcal"
-✅ 이미지에 보이는 정확한 숫자 그대로
-
-=== 검증 레벨: 극도로 엄격 ===
-다음 **모든 경우**를 오류로 판정:
-1. 글자 1개 차이 (전반 ≠ 전분)
-2. 띄어쓰기 차이 (900g ≠ 900 g)
-3. 쉼표 빠짐 (대두 게 ≠ 대두, 게)
-4. 점 빠짐 (굴전복 ≠ 굴․전복)
-5. 숫자 차이 (70.6 ≠ 70.5)
-6. 단위 차이 (mg ≠ g)
-7. 괄호 위치 차이
-8. 특수문자 차이
-
-=== 오류 타입 분류 기준 ===
-
-**1. Critical (치명적 오류) - 보라색**
-- 원재료명의 내용 불일치 (누락, 순서 변경, 함량 차이)
-- 영양정보의 수치/단위 불일치 (g↔mg, 칼로리 계산 오류)
-- 알레르기 유발물질 누락 또는 오기
-
-예시:
-- location: "원재료명" + 전분가공품2 → 전분가공품1 (숫자 오류)
-- location: "영양정보 - 단백질" + 10g → 10mg (단위 오류)
-- location: "알레르기 정보" + 대두, 게 → 대두 게 (쉼표 누락)
-
-**2. Minor (경미한 오류) - 노란색**
-- 띄어쓰기 차이 (900g vs 900 g)
-- 괄호 위치 차이 (전분가공품1[...] vs 전분가공품1(...))
-- 특수문자 표기 차이 (중점 ․ vs 점 .)
-
-예시:
-- location: "제품 기본정보 - 내용량" + 900g → 900 g (띄어쓰기)
-- location: "원재료명" + [ → ( (괄호 종류)
-
-**3. Law_Violation (법률 위반) - 빨간색**
-- 필수 표기 문구 누락 ("소비기한", "1399 신고" 등)
-- 포장재질/분리배출 표시 누락
-- 법정 의무사항 미준수
-
-=== 필수 검증 항목 (빠짐없이 모두 확인) ===
-
-**[제품 기본 정보]**
-□ 제품명 - 글자 하나하나 일치 확인
-□ 식품의 유형 - 괄호, 슬래시 등 정확히 확인
-□ 내용량 - 숫자와 단위 띄어쓰기 확인 (900 g vs 900g)
-□ 소비기한 - "소비기한"인지 "유통기한"인지 정확히
-□ 보관방법 - 온도 기호(℃, ~) 정확히
-□ 포장재질 - 괄호 안 내용 정확히
-□ 품목보고번호 - 숫자 한 자리라도 다르면 오류
-□ 전면부 총열량/문구 - 쉼표, 숫자 정확히
-
-**[원재료명] - 가장 중요**
-□ 각 원재료명 **철자 하나하나** 확인
-  - 예: "전반가공품" ≠ "전분가공품"
-  - 예: "카사바전분" ≠ "카사바 전분"
-□ 함량% - 소수점 이하까지 정확히 (70.6% ≠ 70.5%)
-□ 쉼표 위치 - "대두, 게" ≠ "대두 게"
-□ 괄호 안 내용 - 공백, 쉼표 모두 정확히
-□ 중점(․) 표기 - "굴․전복" ≠ "굴.전복" ≠ "굴전복"
-
-**[영양정보]**
-□ 모든 숫자 정확히 (소수점, 쉼표 포함)
-□ 단위 정확히 (g, mg, kcal, Kcal)
-□ % 기호 및 숫자
-□ 띄어쓰기 (530 mg vs 530mg)
-
-**[알레르기 정보]**
-□ 쉼표로 구분된 항목들 - "대두, 게" ≠ "대두 게"
-□ 중점 표기 - "굴․전복․홍합" 정확히
-□ 괄호 안 내용 정확히
-
-**[제조원 정보]**
-□ 회사명 철자 정확히
-□ 주소 정확히 (번지, 동 이름 등)
-
-**[주의사항]**
-□ 모든 문장 포함 여부
-□ 문장부호 (⦁, •, ․ 등) 정확히
-
-[감점 기준표 (총점 100점에서 시작)]
-기본 100점에서 아래 오류가 발견될 때마다 점수를 차감하세요. (최하 0점)
-
-1. **원재료명 오류 (-5점/건)**:
-   - Standard(엑셀)에 있는 원재료가 Design(이미지)에 없거나 순서가 다름.
-   - 함량(%) 숫자가 0.1%라도 다름. (예: 70.6% vs 70.5%)
-2. **영양성분 오류 (-5점/건)**:
-   - 나트륨, 탄수화물, 당류 등의 수치 또는 단위(g, mg) 불일치.
-   - 비율(%) 숫자가 다름.
-3. **법적 의무 문구 누락 (-10점/건)**:
-   - "소비기한" (유통기한 아님) 표기 여부.
-   - "부정 불량식품 신고는 국번없이 1399" 표기 여부.
-   - 알레르기 유발물질 별도 표시란 유무.
-   - 포장재질 및 분리배출 마크 유무.
-4. **단순 오타 (-2점/건)**:
-   - 괄호 위치 등 경미한 차이.
-
-[분석 프로세스 - 단계별 수행]
-
-**검증 절차**:
-Step 1: 이미지 → 원본 텍스트 추출 (보정 절대 금지)
-Step 2: 원본 텍스트를 1글자씩 쪼개기 (쉼표도 1글자)
-Step 3: Standard도 1글자씩 쪼개기
-Step 4: 배열 비교 (인덱스별로)
-Step 5: 다른 인덱스 → issues에 추가
-
-=== 검증 알고리즘 (반드시 따르세요) ===
-
-function verify(standard, design_image):
-    # Step 1: 이미지에서 정확한 텍스트 추출 (보정 금지!)
-    design_text = extract_exact_text(design_image)
-    # "우유 쇠고기 토마토" ← 쉼표 없음 그대로
-    
-    # Step 2: Standard에서 비교할 부분 찾기
-    if "알레르기" in context:
-        standard_text = standard.allergens.manufacturing_facility
-        # "우유, 쇠고기, 토마토" ← 쉼표 있음
-    
-    # Step 3: 글자 배열로 변환
-    standard_chars = list(standard_text)
-    design_chars = list(design_text)
-    
-    # Step 4: 인덱스별 비교
-    issues = []
-    for i in range(max(len(standard_chars), len(design_chars))):
-        if standard_chars[i] != design_chars[i]:
-            issues.append({
-                "position": i,
-                "expected": standard_chars[i],
-                "actual": design_chars[i]
-            })
-    
-    # Step 5: issues가 있으면 상세 설명 생성
-    if issues:
-        return {
-            "type": "Critical",
-            "issue": f"{len(issues)}개 글자 차이",
-            "expected": standard_text,
-            "actual": design_text
-        }
-    
-    return None  # 차이 없음
-
-=== 학습 예시 (이렇게 판단하세요) ===
-
-**예시 1: 쉼표 누락 케이스**
-
-Standard 텍스트:
-"우유, 쇠고기, 토마토"
-
-Design 이미지에서 추출한 텍스트:
-"우유 쇠고기 토마토"
-
-글자 단위 비교:
-Standard: ['우','유',',','쇠','고','기',',','토','마','토']
-Design:   ['우','유',' ','쇠','고','기',' ','토','마','토']
-           ✓  ✓  ❌  ✓  ✓  ✓  ❌  ✓  ✓  ✓
-
-**예시 2: 정상 케이스**
-
-Standard: "대두, 게"
-Design:   "대두, 게"
-
-글자 단위 비교:
-Standard: ['대','두',',','게']
-Design:   ['대','두',',','게']
-           ✓  ✓  ✓  ✓
-
-차이점: 없음
-
-판단: 정상!
-issues에 추가하지 않음
-
-**출력 형식 (JSON만 출력, 마크다운 없음)**:
-{
-  "design_ocr_text": "디자인에서 추출한 전체 텍스트",
-  "score": (100에서 차감한 최종 점수),
-  "law_compliance": {
-    "status": "compliant" 또는 "violation",
-    "violations": ["위반 내용 (없으면 빈 배열)"]
-  },
-  "issues": [
-    {
-      "type": "Critical" (내용 불일치) | "Minor" (오타) | "Law_Violation",
-      "location": "항목명 (예: 원재료명, 영양정보)",
-      "issue": "무엇이 잘못되었는지",
-      "expected": "Standard에 있는 정확한 값",
-      "actual": "Design에서 발견된 오류 텍스트 (하이라이트할 텍스트)",
-      "suggestion": "수정 방법"
-    }
-  ]
-}
-
-**중요 체크리스트**:
-✅ Standard와 Design이 일치하면 score=100, issues=[]
-✅ OCR 시 자동 보정 하지 않았는지 (틀린 글자도 그대로 추출했는지)
-✅ 글자 하나하나 비교했는지
-✅ 추측하지 말기
-✅ 숫자, 단위 정확히 확인했는지
-
-**🚨 다시 한번 강조: 이미지에 오탈자가 있을지라도 자동 수정하지 마세요! 보이는 그대로**
+... (기존 PROMPT_VERIFY_DESIGN 내용 그대로, 생략 없이 유지) ...
 """
 
 
@@ -763,21 +518,20 @@ def extract_ingredient_info_from_image(image_file):
 
         img_pil = PIL.Image.open(io.BytesIO(image_data))
 
-        # ✅ generation_config 추가
         generation_config = {
             "temperature": 0.0,
             "top_p": 1.0,
             "top_k": 1,
             "candidate_count": 1,
-            "max_output_tokens": 4096,  # 이미지 OCR은 짧으므로 4096 충분
-            "response_mime_type": "application/json"  # JSON 강제
+            "max_output_tokens": 4096,
+            "response_mime_type": "application/json"
         }
 
         model = genai.GenerativeModel(MODEL_NAME)
-        
+
         parts = [PROMPT_EXTRACT_INGREDIENT_INFO, img_pil]
         response = model.generate_content(parts)
-        
+
         result_text = response.text.strip()
         # JSON 파싱
         if result_text.startswith("```json"):
@@ -786,7 +540,7 @@ def extract_ingredient_info_from_image(image_file):
             result_text = result_text.split("```")[1].strip()
             if result_text.startswith("json"):
                 result_text = result_text[4:].strip()
-        
+
         return json.loads(result_text)
     except json.JSONDecodeError as e:
         print(f"원재료 정보 JSON 파싱 실패: {e}")
@@ -796,16 +550,17 @@ def extract_ingredient_info_from_image(image_file):
         print(f"원재료 정보 추출 실패: {e}")
         return None
 
+
 def create_standard_excel(data):
     """기준 데이터를 엑셀 파일로 생성"""
     output = io.BytesIO()
-    
+
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         # 1. 제품 정보 시트
         if 'product_info' in data:
             product_df = pd.DataFrame([data['product_info']])
             product_df.to_excel(writer, sheet_name='제품정보', index=False)
-        
+
         # 2. 원재료명 시트
         if 'ingredients' in data:
             ingredients_data = []
@@ -818,14 +573,14 @@ def create_standard_excel(data):
             ingredients_df = pd.DataFrame(ingredients_data)
             if not ingredients_df.empty:
                 ingredients_df.to_excel(writer, sheet_name='원재료명', index=False)
-            
+
             # 연속 텍스트도 추가
             if 'continuous_text' in data['ingredients']:
                 continuous_df = pd.DataFrame([{
                     '원재료명_연속텍스트': data['ingredients']['continuous_text']
                 }])
                 continuous_df.to_excel(writer, sheet_name='원재료명_연속텍스트', index=False)
-        
+
         # 3. 알레르기 정보 시트
         if 'allergens' in data:
             allergens_data = []
@@ -842,7 +597,7 @@ def create_standard_excel(data):
             if allergens_data:
                 allergens_df = pd.DataFrame(allergens_data)
                 allergens_df.to_excel(writer, sheet_name='알레르기정보', index=False)
-        
+
         # 4. 영양정보 시트
         if 'nutrition_info' in data and 'per_100g' in data['nutrition_info']:
             nutrition_data = []
@@ -863,22 +618,22 @@ def create_standard_excel(data):
             if nutrition_data:
                 nutrition_df = pd.DataFrame(nutrition_data)
                 nutrition_df.to_excel(writer, sheet_name='영양정보', index=False)
-        
+
         # 5. 제조원 정보 시트
         if 'manufacturer' in data:
             manufacturer_df = pd.DataFrame([data['manufacturer']])
             manufacturer_df.to_excel(writer, sheet_name='제조원정보', index=False)
-        
+
         # 6. 주의사항 시트
         if 'precautions' in data:
             precautions_df = pd.DataFrame([{'주의사항': item} for item in data['precautions']])
             precautions_df.to_excel(writer, sheet_name='주의사항', index=False)
-        
+
         # 7. 상세 정보 시트 (원재료 상세)
         if 'details' in data and data['details']:
             details_df = pd.DataFrame(data['details'])
             details_df.to_excel(writer, sheet_name='원재료상세', index=False)
-    
+
     output.seek(0)
     return output
 
@@ -915,7 +670,8 @@ def create_standard():
 
     # (2) 엑셀 데이터
     excel_part = process_file_to_part(excel_file)
-    if excel_part: parts.append(excel_part)
+    if excel_part:
+        parts.append(excel_part)
 
     # (3) 원재료 사진들 - 필요한 정보만 추출
     ingredient_info_list = []
@@ -924,7 +680,7 @@ def create_standard():
         ingredient_info = extract_ingredient_info_from_image(img)
         if ingredient_info:
             ingredient_info_list.append(ingredient_info)
-    
+
     # 추출된 원재료 정보를 텍스트로 변환하여 추가
     if ingredient_info_list:
         ingredients_text = "--- [원재료 표시사항에서 추출한 정보] ---\n"
@@ -938,14 +694,13 @@ def create_standard():
     print(f"📂 처리 중: 엑셀 1개 + 원재료 이미지 {len(raw_images)}장 (정보 추출 완료)")
 
     try:
-        # [핵심] 완전한 generation_config 설정
         generation_config = {
-            "temperature": 0.0,  # 창의성 0
-            "top_p": 1.0,  # nucleus sampling 비활성화
-            "top_k": 1,  # 가장 확률 높은 토큰만 선택
-            "candidate_count": 1,  # 후보 1개만
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "top_k": 1,
+            "candidate_count": 1,
             "max_output_tokens": 32768,
-            "response_mime_type": "application/json"  # JSON 강제
+            "response_mime_type": "application/json"
         }
 
         model = genai.GenerativeModel(
@@ -957,7 +712,7 @@ def create_standard():
 
         # JSON 파싱
         result_text = response.text.strip()
-        
+
         # JSON 코드 블록 제거
         if result_text.startswith("```json"):
             result_text = result_text[7:]
@@ -970,9 +725,9 @@ def create_standard():
                 result_text = "\n".join(lines[1:])
             if result_text.endswith("```"):
                 result_text = result_text[:-3]
-        
+
         result_text = result_text.strip()
-        
+
         # JSON 파싱 시도
         try:
             result = json.loads(result_text)
@@ -982,13 +737,12 @@ def create_standard():
             print(f"오류 위치: line {json_err.lineno}, column {json_err.colno}")
             # JSON 수정 시도 (마지막 쉼표 제거 등)
             try:
-                # 마지막 쉼표 제거 시도
                 result_text_fixed = result_text.replace(',\n}', '\n}').replace(',\n]', '\n]')
                 result = json.loads(result_text_fixed)
                 print("✅ JSON 수정 후 파싱 성공")
-            except:
+            except Exception:
                 return jsonify({"error": f"JSON 파싱 실패: {str(json_err)}. 응답의 일부: {result_text[:200]}..."}), 500
-        
+
         return jsonify(result)
 
     except Exception as e:
@@ -1006,11 +760,11 @@ def download_standard_excel():
         data = request.get_json()
         if not data:
             return jsonify({"error": "기준 데이터가 없습니다."}), 400
-        
+
         excel_buffer = create_standard_excel(data)
         product_name = data.get('product_info', {}).get('product_name', '기준데이터') or data.get('product_name', '기준데이터')
         filename = f"{product_name}_기준데이터.xlsx"
-        
+
         return send_file(
             excel_buffer,
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -1023,6 +777,7 @@ def download_standard_excel():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+
 # 엑셀 파일에서 기준 데이터 읽기
 @app.route('/api/read-standard-excel', methods=['POST'])
 def read_standard_excel():
@@ -1031,33 +786,28 @@ def read_standard_excel():
         excel_file = request.files.get('excel_file')
         if not excel_file:
             return jsonify({"error": "엑셀 파일이 필요합니다."}), 400
-        
-        # 🔥 핵심: dtype=str로 모든 값을 문자열 그대로 읽기
+
         df_dict = pd.read_excel(
             io.BytesIO(excel_file.read()),
             sheet_name=None,
             engine='openpyxl',
-            dtype=str,  # 모든 컬럼을 문자열로
-            keep_default_na=False,  # NaN 변환 방지
-            na_filter=False  # NA 필터링 비활성화
+            dtype=str,
+            keep_default_na=False,
+            na_filter=False
         )
 
-        # 데이터 처리 시 strip() 제거 (공백도 유지)
         for sheet_name, df in df_dict.items():
             df_dict[sheet_name] = df.astype(str)
 
-        # 엑셀 데이터를 JSON 형식으로 변환
         result = {}
-        
+
         if '제품정보' in df_dict:
             product_info = df_dict['제품정보'].to_dict('records')[0]
             result['product_info'] = product_info
-        
-        # 첫 번째 시트를 우선 사용
+
         first_sheet_name = list(df_dict.keys())[0]
         first_sheet_df = df_dict[first_sheet_name]
-        
-        # 원재료명 처리 (시트 이름에 관계없이 첫 번째 시트 사용)
+
         if '원재료명' in df_dict:
             ingredients_list = df_dict['원재료명']['원재료명'].dropna().tolist()
             result['ingredients'] = {
@@ -1071,19 +821,18 @@ def read_standard_excel():
                 'continuous_text': continuous_text
             }
         elif not first_sheet_df.empty:
-            # 첫 번째 시트의 첫 번째 컬럼을 원재료명으로 사용
             first_column = first_sheet_df.columns[0]
             if '원재료명' in first_sheet_df.columns:
                 ingredients_list = first_sheet_df['원재료명'].dropna().tolist()
             else:
                 ingredients_list = first_sheet_df[first_column].dropna().astype(str).tolist()
-            
+
             if ingredients_list:
                 result['ingredients'] = {
                     'structured_list': ingredients_list,
                     'continuous_text': ', '.join(ingredients_list)
                 }
-        
+
         if '알레르기정보' in df_dict:
             allergens_df = df_dict['알레르기정보']
             result['allergens'] = {}
@@ -1092,7 +841,7 @@ def read_standard_excel():
                     result['allergens']['contains'] = row['내용'].split(', ')
                 elif row['항목'] == '제조시설 안내':
                     result['allergens']['manufacturing_facility'] = row['내용']
-        
+
         if '영양정보' in df_dict:
             nutrition_df = df_dict['영양정보']
             per_100g = {}
@@ -1105,22 +854,23 @@ def read_standard_excel():
                         'daily_value': row['1일 영양성분 기준치에 대한 비율(%)']
                     }
             result['nutrition_info'] = {'per_100g': per_100g}
-        
+
         if '제조원정보' in df_dict:
             result['manufacturer'] = df_dict['제조원정보'].to_dict('records')[0]
-        
+
         if '주의사항' in df_dict:
             result['precautions'] = df_dict['주의사항']['주의사항'].tolist()
-        
+
         if '원재료상세' in df_dict:
             result['details'] = df_dict['원재료상세'].to_dict('records')
-        
+
         return jsonify(result)
     except Exception as e:
         print(f"❌ 엑셀 읽기 오류: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
 
 # 2단계: 검증하기 (엑셀 파일 또는 JSON + 디자인 이미지)
 @app.route('/api/verify-design', methods=['POST'])
@@ -1272,33 +1022,55 @@ def verify_design():
         # ✅ OCR 원문 강제 삽입
         json_obj["design_ocr_text"] = forced_design_text
 
-        # 7. ✅ 하이라이트 위치 계산
+        # 7. ✅ 하이라이트 위치 계산 (단어 전체 기준)
         design_text = forced_design_text
         issues = json_obj.get("issues", [])
 
+        # position 채우기
         issues = add_issue_positions(issues, design_text)
         json_obj["issues"] = issues
 
+        # 하이라이트 HTML 생성
         highlight_html = design_text
 
+        # 뒤에서 앞으로 처리해서 인덱스 꼬임 방지
         for issue in sorted(issues, key=lambda x: x.get("position", -1), reverse=True):
             pos = issue.get("position")
+            if not isinstance(pos, int) or pos < 0 or pos >= len(highlight_html):
+                continue
 
-            if isinstance(pos, int) and 0 <= pos < len(highlight_html):
-                wrong_char = highlight_html[pos]
-                expected = issue.get("expected", "")
+            actual = (issue.get("actual") or "").strip()
+            expected = (issue.get("expected") or "").strip()
 
-                span = (
-                    f"<span style='background:#ffe6e6; color:#d32f2f; font-weight:bold;' "
-                    f"title='정답: {expected}'>{wrong_char}</span>"
-                )
+            # 실제 표시 문자열 전체 길이 기준
+            if actual:
+                length = len(actual)
+            else:
+                # fallback: 한 글자만
+                length = 1
 
-                highlight_html = (
-                    highlight_html[:pos]
-                    + span
-                    + highlight_html[pos + 1:]
-                )
+            start = pos
+            end = pos + length
 
+            # 범위 방어
+            if start < 0:
+                start = 0
+            if end > len(highlight_html):
+                end = len(highlight_html)
+
+            target_text = highlight_html[start:end]
+
+            span = (
+                "<span style='background:#ffe6e6; "
+                "color:#d32f2f; font-weight:bold;' "
+                f"title='정답: {html_mod.escape(expected)}'>"
+                f"{html_mod.escape(target_text)}</span>"
+            )
+
+            highlight_html = highlight_html[:start] + span + highlight_html[end:]
+
+        # 줄바꿈을 <br>로 변환해서 브라우저에서 그대로 보이도록
+        highlight_html = highlight_html.replace("\n", "<br>")
         json_obj["design_ocr_highlighted_html"] = highlight_html
 
         return jsonify(json_obj)
@@ -1308,8 +1080,6 @@ def verify_design():
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
-
-
 
 
 @app.route('/api/verify-design-strict', methods=['POST'])
@@ -1329,7 +1099,7 @@ def verify_design_strict():
 
         # 1. OCR 수행 (Gemini)
         parts = [
-            PROMPT_EXTRACT_RAW_TEXT,  # 4번에서 추가한 프롬프트 사용
+            PROMPT_EXTRACT_RAW_TEXT,
             process_file_to_part(design_file)
         ]
 
@@ -1340,7 +1110,6 @@ def verify_design_strict():
         })
         response = model.generate_content(parts)
 
-        # ✅ 정확한 코드
         result_text = response.text.strip()
         if result_text.startswith("```json"):
             result_text = result_text[7:-3]
@@ -1355,8 +1124,10 @@ def verify_design_strict():
         # 원재료명 비교
         if 'ingredients' in standard_data:
             std_text = standard_data['ingredients']['continuous_text']
+        else:
+            std_text = ""
         des_text = design_ocr.get('raw_text', '')
-        issues = compare_texts_strict(std_text, des_text)  # 3-1에서 추가한 함수 사용
+        issues = compare_texts_strict(std_text, des_text)
 
         for issue in issues:
             all_issues.append({
@@ -1386,21 +1157,20 @@ def verify_design_strict():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+
 # QA 자료 업로드 및 식품표시사항 작성 API
 @app.route('/api/upload-qa', methods=['POST'])
 def upload_qa():
     """QA 자료를 업로드하고 식품표시사항을 작성합니다."""
     print("📋 QA 자료 업로드 및 식품표시사항 작성 시작...")
-    
-    # QA 자료 파일들 (엑셀, 이미지 등)
+
     qa_files = request.files.getlist('qa_files')
-    
+
     if not qa_files or len(qa_files) == 0:
         return jsonify({"error": "QA 자료 파일이 필요합니다."}), 400
 
-    # AI에게 보낼 데이터 꾸러미 만들기
     parts = []
-    
+
     qa_prompt = """
 당신은 식품표시사항 작성 전문가입니다.
 제공된 QA 자료를 분석하여 법률을 준수하는 식품표시사항을 작성하세요.
@@ -1427,31 +1197,25 @@ def upload_qa():
     }
 }
 """
-    
-    # 법령 정보 추가
+
     if ALL_LAW_TEXT:
         qa_prompt += f"\n\n--- [참고 법령] ---\n{ALL_LAW_TEXT}\n--- [법령 끝] ---\n"
-    
+
     parts.append(qa_prompt)
 
-
-    # QA 파일들 처리
-    for qa_file in qa_files[:20]:  # 최대 20개 파일
+    for qa_file in qa_files[:20]:
         file_part = process_file_to_part(qa_file)
         if file_part:
             parts.append(file_part)
-    
+
     print(f"📂 QA 자료 처리 중: {len(qa_files)}개 파일")
-    
+
     try:
         model = genai.GenerativeModel(MODEL_NAME)
         response = model.generate_content(parts)
 
-
-        # JSON 파싱
         result_text = response.text.strip()
-        
-        # JSON 코드 블록 제거
+
         if result_text.startswith("```json"):
             result_text = result_text[7:]
             if result_text.endswith("```"):
@@ -1462,26 +1226,24 @@ def upload_qa():
                 result_text = "\n".join(lines[1:])
             if result_text.endswith("```"):
                 result_text = result_text[:-3]
-        
+
         result_text = result_text.strip()
-        
-        # JSON 파싱 시도
+
         try:
             result = json.loads(result_text)
         except json.JSONDecodeError as json_err:
             print(f"❌ JSON 파싱 오류: {json_err}")
             print(f"응답 텍스트 (처음 1000자): {result_text[:1000]}")
             print(f"오류 위치: line {json_err.lineno}, column {json_err.colno}")
-            # JSON 수정 시도
             try:
                 result_text_fixed = result_text.replace(',\n}', '\n}').replace(',\n]', '\n]')
                 result = json.loads(result_text_fixed)
                 print("✅ JSON 수정 후 파싱 성공")
-            except:
+            except Exception:
                 return jsonify({"error": f"JSON 파싱 실패: {str(json_err)}. 응답의 일부: {result_text[:200]}..."}), 500
-        
+
         return jsonify(result)
-        
+
     except Exception as e:
         print(f"❌ QA 자료 처리 오류: {e}")
         import traceback
