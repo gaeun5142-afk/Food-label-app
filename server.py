@@ -307,34 +307,47 @@ def process_file_to_part(file_storage):
     return {"mime_type": mime_type, "data": file_data}
 
 def extract_ingredient_info_from_image(image_file):
-    """원재료 표시사항 이미지에서 필요한 정보만 추출"""
+    """원재료 표시사항 이미지에서 필요한 정보만 추출 (✅ 3회 투표 방식 적용)"""
     try:
         image_data = image_file.read()
         image_file.seek(0)
-        
+
         img_pil = PIL.Image.open(io.BytesIO(image_data))
         model = genai.GenerativeModel(MODEL_NAME)
-        
+
         parts = [PROMPT_EXTRACT_INGREDIENT_INFO, img_pil]
-        response = model.generate_content(parts)
-        
-        result_text = response.text.strip()
-        # JSON 파싱
-        if result_text.startswith("```json"):
-            result_text = result_text[7:-3]
-        elif result_text.startswith("```"):
-            result_text = result_text.split("```")[1].strip()
-            if result_text.startswith("json"):
-                result_text = result_text[4:].strip()
-        
-        return json.loads(result_text)
+
+        # ✅ ✅ ✅ 1. AI 호출 3번 수행
+        results = []
+        for _ in range(3):
+            response = model.generate_content(parts)
+            result_text = response.text.strip()
+
+            # JSON 코드블럭 제거
+            if result_text.startswith("```json"):
+                result_text = result_text[7:-3]
+            elif result_text.startswith("```"):
+                result_text = result_text.split("```")[1].strip()
+                if result_text.startswith("json"):
+                    result_text = result_text[4:].strip()
+
+            results.append(result_text)
+
+        # ✅ ✅ ✅ 2. 가장 많이 등장한 결과 선택 (다수결)
+        final_result_text = max(set(results), key=results.count)
+
+        # ✅ ✅ ✅ 3. JSON 파싱
+        return json.loads(final_result_text)
+
     except json.JSONDecodeError as e:
-        print(f"원재료 정보 JSON 파싱 실패: {e}")
-        print(f"응답 텍스트: {result_text[:500]}...")
+        print(f"❌ 원재료 정보 JSON 파싱 실패: {e}")
+        print(f"❌ 최종 응답 텍스트: {final_result_text[:500]}...")
         return None
+
     except Exception as e:
-        print(f"원재료 정보 추출 실패: {e}")
+        print(f"❌ 원재료 정보 추출 실패: {e}")
         return None
+
 
 def create_standard_excel(data):
     """기준 데이터를 엑셀 파일로 생성"""
@@ -664,6 +677,12 @@ def verify_design():
         # -----------------------------
         full_prompt = f"""
 {PROMPT_VERIFY_DESIGN}
+[절대 규칙]
+- 추측 금지
+- 보이는 텍스트만 근거로 판단
+- 수치·문장·특수문자 하나라도 불명확하면 “불일치”로 처리
+- 기준 데이터에 없는 정보는 절대 추가하지 말 것
+- 동일 입력에 대해 항상 동일한 JSON 구조로만 출력
 
 [기준 데이터(JSON)]
 {standard_json}
