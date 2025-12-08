@@ -11,11 +11,32 @@ import PIL.Image
 import PIL.ImageEnhance
 import re
 
-def normalize_number(text):
-    if not text:
-        return ""
-    # 숫자와 소수점만 남김
-    return re.sub(r"[^0-9.]", "", str(text))
+def normalize_strict_keep_space(text: str) -> str:
+    if not isinstance(text, str):
+        text = str(text)
+    return unicodedata.normalize("NFKC", text)
+
+def normalize_number_only(text: str) -> str:
+    return re.sub(r"[^0-9.]", "", text or "")
+
+def char_diff_positions(a: str, b: str):
+    a = normalize_strict_keep_space(a)
+    b = normalize_strict_keep_space(b)
+
+    max_len = max(len(a), len(b))
+    diffs = []
+
+    for i in range(max_len):
+        ca = a[i] if i < len(a) else "(없음)"
+        cb = b[i] if i < len(b) else "(없음)"
+        if ca != cb:
+            diffs.append({
+                "position": i,
+                "expected": ca,
+                "actual": cb
+            })
+    return diffs
+
 
 # --- 설정 및 초기화 ---
 load_dotenv()
@@ -344,6 +365,34 @@ def process_file_to_part(file_storage):
     # Gemini는 image/jpeg, image/png, application/pdf 등을 지원함
     return {"mime_type": mime_type, "data": file_data}
 
+def extract_raw_text_strict(image_file):
+    image_file.seek(0)
+
+    parts = [
+        PROMPT_EXTRACT_RAW_TEXT,
+        process_file_to_part(image_file)
+    ]
+
+    model = genai.GenerativeModel(
+        MODEL_NAME,
+        generation_config={
+            "temperature": 0.0,
+            "top_k": 1,
+            "top_p": 1.0,
+            "candidate_count": 1,
+            "max_output_tokens": 8192,
+            "response_mime_type": "application/json"
+        }
+    )
+
+    response = model.generate_content(parts)
+    result_text = response.text.strip()
+
+    if result_text.startswith("```"):
+        result_text = result_text.split("```")[1]
+
+    return json.loads(result_text).get("raw_text", "")
+
 def extract_ingredient_info_from_image(image_file):
     """원재료 표시사항 이미지에서 필요한 정보만 추출 (✅ 3회 투표 방식 적용)"""
     try:
@@ -665,150 +714,110 @@ def download_standard_excel():
         return jsonify({"error": str(e)}), 500
 
 # 2단계: 검증하기 (엑셀 파일 또는 JSON + 디자인 이미지)
-@app.route('/api/verify-design', methods=['POST'])
-def verify_design():
-    print("🕵️‍♂️ 2단계: 디자인 검증 시작...")
-
+@app.route('/api/verify-design-strict', methods=['POST'])
+def verify_design_strict():
     try:
-        # -----------------------------
-        # 1. 파일 받기
-        # -----------------------------
-        design_file = request.files.get('design_file')
-        standard_excel = request.files.get('standard_excel')
-        standard_json = request.form.get('standard_data')
+        design_file = request.files.get("design_file")
+        standard_json = request.form.get("standard_data")
 
-        if not design_file:
-            return jsonify({"error": "디자인 파일이 필요합니다. (design_file)"}), 400
+        if not design_file or not standard_json:
+            return jsonify({"error": "디자인 파일과 기준 JSON이 필요합니다."}), 400
 
-        # -----------------------------
-        # 2. 기준 데이터 로딩 (엑셀 -> JSON)
-        # -----------------------------
-        if standard_excel:
-            df_dict = pd.read_excel(
-                io.BytesIO(standard_excel.read()),
-                sheet_name=None,
-                engine='openpyxl'
-            )
+        standard = json.loads(standard_json)
 
-            first_sheet_df = list(df_dict.values())[0]
+        # ✅ 1. OCR (AI는 여기까지만)
+        design_text = extract_raw_text_strict(design_file)
 
-            ingredients_list = []
-            if '원재료명' in first_sheet_df.columns:
-                ingredients_list = (
-                    first_sheet_df['원재료명']
-                    .dropna()
-                    .astype(str)
-                    .tolist()
-                )
+        issues = []
+        score = 100
 
-            standard_data = {
-                'ingredients': {
-                    'structured_list': ingredients_list,
-                    'continuous_text': ', '.join(ingredients_list)
-                }
+        # ✅ 2. 원재료 비교
+        if "ingredients" in standard:
+            std_ing = standard["ingredients"].get("continuous_text", "")
+            diffs = char_diff_positions(std_ing, design_text)
+
+            if diffs:
+                score -= min(50, len(diffs) * 5)
+                issues.append({
+                    "type": "Critical",
+                    "location": "원재료명",
+                    "issue": f"{len(diffs)}개 글자 불일치",
+                    "expected": std_ing,
+                    "actual": design_text,
+                    "suggestion": "디자인 원재료 텍스트를 기준 데이터와 동일하게 수정"
+                })
+
+        # ✅ 3. 영양정보 숫자 검증
+        if "nutrition_info" in standard:
+            nut = standard["nutrition_info"].get("per_100g", {})
+            for k, v in nut.items():
+                if isinstance(v, dict):
+                    std_val = normalize_number_only(v.get("amount", ""))
+                    if std_val and std_val not in normalize_number_only(design_text):
+                        score -= 5
+                        issues.append({
+                            "type": "Critical",
+                            "location": f"영양정보-{k}",
+                            "issue": "영양 수치 불일치",
+                            "expected": v.get("amount"),
+                            "actual": "디자인에서 미검출",
+                            "suggestion": "영양성분 수치 수정"
+                        })
+
+        # ✅ 4. 알레르기 쉼표 포함 검증
+        if "allergens" in standard and "manufacturing_facility" in standard["allergens"]:
+            std_all = standard["allergens"]["manufacturing_facility"]
+            if normalize_strict_keep_space(std_all) not in normalize_strict_keep_space(design_text):
+                score -= 10
+                issues.append({
+                    "type": "Law_Violation",
+                    "location": "알레르기 문구",
+                    "issue": "알레르기 제조시설 문구 불일치",
+                    "expected": std_all,
+                    "actual": "디자인 미일치",
+                    "suggestion": "알레르기 문구를 법정 문구와 동일하게 수정"
+                })
+
+        # ✅ 5. 법정 필수 문구 검증 (소비기한, 1399)
+        mandatory_rules = {
+            "소비기한": "식품등의 표시기준 제8조",
+            "1399": "식품위생법 제13조"
+        }
+
+        law_violations = []
+
+        for word, law in mandatory_rules.items():
+            if word not in design_text:
+                score -= 10
+                law_violations.append(f"{law} 위반: '{word}' 미표기")
+                issues.append({
+                    "type": "Law_Violation",
+                    "location": "법정 필수 문구",
+                    "issue": f"{word} 누락",
+                    "expected": word,
+                    "actual": "미표기",
+                    "suggestion": f"{word} 문구 추가"
+                })
+
+        # ✅ 6. 점수 보정
+        if score < 0:
+            score = 0
+
+        return jsonify({
+            "design_ocr_text": design_text,
+            "score": score,
+            "issues": issues,
+            "law_compliance": {
+                "status": "violation" if law_violations else "compliant",
+                "violations": law_violations
             }
-
-            standard_json = json.dumps(standard_data, ensure_ascii=False)
-
-        # -----------------------------
-        # 3. 프롬프트 조합
-        # -----------------------------
-        full_prompt = f"""
-{PROMPT_VERIFY_DESIGN}
-
-[절대 규칙]
-- 추측 금지
-- 보이는 텍스트만 근거로 판단
-- 기준에 없는 정보 추가 금지
-- 동일 입력은 동일 JSON 출력
-
-[기준 데이터(JSON)]
-{standard_json}
-"""
-
-        parts = [full_prompt]
-
-        design_file.stream.seek(0)
-        design_part = process_file_to_part(design_file)
-        if not design_part:
-            return jsonify({"error": "디자인 파일 처리 실패"}), 400
-
-        parts.append(design_part)
-
-        # -----------------------------
-        # 4. Gemini 호출
-        # -----------------------------
-        model = genai.GenerativeModel(
-            MODEL_NAME,
-            generation_config={"temperature": 0.0}
-        )
-
-        response = model.generate_content(parts)
-        result_text = response.text.strip()
-
-        # -----------------------------
-        # 5. ✅ JSON 안전 파싱 (502 절대 방지)
-        # -----------------------------
-        try:
-            json_match = re.search(r"(\{.*\})", result_text, re.DOTALL)
-
-            if json_match:
-                clean_json = json_match.group(1)
-            else:
-                clean_json = result_text.replace("```", "").strip()
-
-            clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
-
-            result = json.loads(clean_json)
-
-        except Exception as e:
-            print("❌ JSON 파싱 실패:", e)
-            print("❌ 원본 응답:", result_text[:1500])
-            return jsonify({
-                "error": "AI JSON 파싱 실패",
-                "raw_ai_text": result_text[:1000]
-            }), 200   # ✅ 여기 절대 500 쓰면 안 됨
-
-        # -----------------------------
-        # ✅ ✅ ✅ 숫자 동일 이슈는 “삭제”하지 말고 Minor 처리
-        # -----------------------------
-        fixed_issues = []
-
-        for issue in result.get("issues") or []:
-            expected = issue.get("expected")
-            actual = issue.get("actual")
-
-            if expected and actual:
-                if normalize_number(expected) == normalize_number(actual):
-                    issue["type"] = "Minor"
-                    issue["issue"] = "표기 형식만 다르고 수치는 동일함 (자동 보정)"
-
-            fixed_issues.append(issue)
-
-        result["issues"] = fixed_issues
-
-        # -----------------------------
-        # ✅ ✅ ✅ 위반 상세 HTML 완전 제거
-        # -----------------------------
-        if "law_compliance" in result:
-            result["law_compliance"]["violations"] = []
-
-        # -----------------------------
-        # ✅ ✅ ✅ 하이라이트 HTML 생성
-        # -----------------------------
-        design_text = result.get("design_ocr_text", "")
-        issues = result.get("issues") or []
-        highlighted_html = make_highlighted_html(design_text, issues)
-        result["design_ocr_highlighted_html"] = highlighted_html
-
-        return jsonify(result)
+        })
 
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({
-            "error": f"서버 내부 오류: {str(e)}"
-        }), 500
+        return jsonify({"error": str(e)}), 500
+
 
 
        
