@@ -185,10 +185,11 @@ def show_main_app():
                 with st.spinner("디자인과 기준 데이터를 비교 중입니다..."):
                     try:
                         response = requests.post(
-                            f"{FLASK_API_URL}/api/verify-design",
+                            f"{FLASK_API_URL}/api/verify-design-strict",
                             files=files,
                             timeout=600,
                         )
+
                     except Exception as e:
                         st.error(f"서버 연결 오류: {e}")
                     else:
