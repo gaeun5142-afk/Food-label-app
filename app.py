@@ -198,7 +198,7 @@ def show_main_app():
     with st.spinner("디자인과 기준 데이터를 비교 중입니다..."):
         try:
             response = requests.post(
-                f"{FLASK_API_URL}/api/verify-design-strict",
+                f"{FLASK_API_URL}/api/verify-design",
                 files=files,
                 data={
                     "standard_data": json.dumps(
