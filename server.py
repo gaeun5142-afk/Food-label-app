@@ -1276,22 +1276,8 @@ def verify_design():
         design_text = forced_design_text
         issues = json_obj.get("issues", [])
 
-        # ✅ 강제 OCR 기준으로 position 재계산 (AI position 무시)
-        fixed_issues = []
-
-        for issue in issues:
-            actual = (issue.get("actual") or "").strip()
-            pos = -1
-
-            if actual and actual in design_text:
-            pos = design_text.find(actual)
-
-            # position 강제 덮어쓰기
-            issue["position"] = pos if pos != -1 else None
-            fixed_issues.append(issue)
-
-            json_obj["issues"] = fixed_issues
-
+        issues = add_issue_positions(issues, design_text)
+        json_obj["issues"] = issues
 
         highlight_html = design_text
 
