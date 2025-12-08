@@ -753,6 +753,8 @@ def verify_design():
             result["design_ocr_highlighted_html"] = highlighted_html
 
             return jsonify(result)
+            if "law_compliance" in result:
+                result["law_compliance"]["violations"] = []
 
         except Exception as e:
             import traceback
