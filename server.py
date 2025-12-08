@@ -715,12 +715,12 @@ def verify_design():
         # -----------------------------
         full_prompt = f"""
 {PROMPT_VERIFY_DESIGN}
+
 [절대 규칙]
 - 추측 금지
 - 보이는 텍스트만 근거로 판단
-- 수치·문장·특수문자 하나라도 불명확하면 “불일치”로 처리
-- 기준 데이터에 없는 정보는 절대 추가하지 말 것
-- 동일 입력에 대해 항상 동일한 JSON 구조로만 출력
+- 기준에 없는 정보 추가 금지
+- 동일 입력은 동일 JSON 출력
 
 [기준 데이터(JSON)]
 {standard_json}
@@ -730,10 +730,10 @@ def verify_design():
 
         design_file.stream.seek(0)
         design_part = process_file_to_part(design_file)
-        if design_part:
-            parts.append(design_part)
-        else:
+        if not design_part:
             return jsonify({"error": "디자인 파일 처리 실패"}), 400
+
+        parts.append(design_part)
 
         # -----------------------------
         # 4. Gemini 호출
@@ -747,7 +747,7 @@ def verify_design():
         result_text = response.text.strip()
 
         # -----------------------------
-        # 5. ✅ JSON 안전 파싱 + 502 방지
+        # 5. ✅ JSON 안전 파싱 (502 절대 방지)
         # -----------------------------
         try:
             json_match = re.search(r"(\{.*\})", result_text, re.DOTALL)
@@ -760,30 +760,32 @@ def verify_design():
             clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
 
             result = json.loads(clean_json)
-            #cleaned_issues = []
-
-            #for issue in result.get("issues", []):
-            #   expected = issue.get("expected")
-            #    actual = issue.get("actual")
-
-            # ✅ expected/actual 이 있고, 숫자가 같으면 제거
-            #if expected and actual:
-             #   if normalize_number(expected) == normalize_number(actual):
-              #      continue
-
-            # ✅ 여기서 무조건 append
-            #cleaned_issues.append(issue)
-
-            # ✅ 반복문이 끝난 뒤에 한 번만 대입
-            #result["issues"] = cleaned_issues
 
         except Exception as e:
             print("❌ JSON 파싱 실패:", e)
-            print("❌ 원본 응답:", result_text[:1000])
+            print("❌ 원본 응답:", result_text[:1500])
             return jsonify({
                 "error": "AI JSON 파싱 실패",
                 "raw_ai_text": result_text[:1000]
-            }), 200
+            }), 200   # ✅ 여기 절대 500 쓰면 안 됨
+
+        # -----------------------------
+        # ✅ ✅ ✅ 숫자 동일 이슈는 “삭제”하지 말고 Minor 처리
+        # -----------------------------
+        fixed_issues = []
+
+        for issue in result.get("issues") or []:
+            expected = issue.get("expected")
+            actual = issue.get("actual")
+
+            if expected and actual:
+                if normalize_number(expected) == normalize_number(actual):
+                    issue["type"] = "Minor"
+                    issue["issue"] = "표기 형식만 다르고 수치는 동일함 (자동 보정)"
+
+            fixed_issues.append(issue)
+
+        result["issues"] = fixed_issues
 
         # -----------------------------
         # ✅ ✅ ✅ 위반 상세 HTML 완전 제거
@@ -807,6 +809,9 @@ def verify_design():
         return jsonify({
             "error": f"서버 내부 오류: {str(e)}"
         }), 500
+
+
+       
 
 
 # QA 자료 업로드 및 식품표시사항 작성 API
