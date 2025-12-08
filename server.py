@@ -11,6 +11,12 @@ import PIL.Image
 import PIL.ImageEnhance
 import re
 
+def normalize_number(text):
+    if not text:
+        return ""
+    # 숫자와 소수점만 남김
+    return re.sub(r"[^0-9.]", "", str(text))
+
 # --- 설정 및 초기화 ---
 load_dotenv()
 app = Flask(__name__)
@@ -722,6 +728,14 @@ def verify_design():
             clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
 
             result = json.loads(clean_json)
+            for issue in result.get("issues", []):
+                expected = issue.get("expected")
+                actual = issue.get("actual")
+
+                if expected and actual:
+                    if normalize_number(expected) == normalize_number(actual):
+                       issue["type"] = "Minor"
+                       issue["issue"] = "표기 형식만 다르고 수치는 동일함 (자동 보정)"
 
         except Exception as e:
             print("❌ JSON 파싱 실패:", e)
