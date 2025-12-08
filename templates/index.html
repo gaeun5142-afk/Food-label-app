@@ -525,9 +525,12 @@ if (data.law_compliance) {
                         실제: ${item.actual || "-"}
              `;
 
-            if (item.law_reference) {
-                html += `<br>관련 법령: ${item.law_reference}`;
+            if (item.law_reference && item.law_reference.trim() !== "") {
+                html += `<br><strong>법령 근거:</strong> ${item.law_reference}`;
+            } else {
+                html += `<br><strong>법령 근거:</strong> (AI가 관련 법령 조문을 특정하지 못했습니다.)`;
             }
+
 
             html += `</small></div>`;
             list.innerHTML += html;
