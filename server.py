@@ -10,6 +10,8 @@ import google.generativeai as genai
 import PIL.Image
 import PIL.ImageEnhance
 import re
+import unicodedata
+
 
 def normalize_strict_keep_space(text: str) -> str:
     if not isinstance(text, str):
@@ -364,6 +366,16 @@ def process_file_to_part(file_storage):
     # 이미지나 PDF는 그대로 전달
     # Gemini는 image/jpeg, image/png, application/pdf 등을 지원함
     return {"mime_type": mime_type, "data": file_data}
+
+PROMPT_EXTRACT_RAW_TEXT = """
+당신은 OCR 엔진입니다.
+이미지 또는 PDF에서 보이는 텍스트를 줄바꿈 포함 그대로 추출하세요.
+불필요한 해석 없이 raw_text 필드 하나로 JSON만 출력하세요.
+
+{
+  "raw_text": "여기에 OCR 전체 텍스트"
+}
+"""
 
 def extract_raw_text_strict(image_file):
     image_file.seek(0)
