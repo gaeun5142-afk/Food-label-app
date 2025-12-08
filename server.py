@@ -761,17 +761,21 @@ def verify_design():
 
             result = json.loads(clean_json)
             cleaned_issues = []
+
             for issue in result.get("issues", []):
                 expected = issue.get("expected")
                 actual = issue.get("actual")
 
-                if expected and actual:
-                    if normalize_number(expected) == normalize_number(actual):
-                        continue 
-                        
-                    cleaned_issues.append(issue)
+            # ✅ expected/actual 이 있고, 숫자가 같으면 제거
+            if expected and actual:
+                if normalize_number(expected) == normalize_number(actual):
+                    continue
 
-                result["issues"] = cleaned_issues
+            # ✅ 여기서 무조건 append
+            cleaned_issues.append(issue)
+
+            # ✅ 반복문이 끝난 뒤에 한 번만 대입
+            result["issues"] = cleaned_issues
 
         except Exception as e:
             print("❌ JSON 파싱 실패:", e)
@@ -791,7 +795,7 @@ def verify_design():
         # ✅ ✅ ✅ 하이라이트 HTML 생성
         # -----------------------------
         design_text = result.get("design_ocr_text", "")
-        issues = result.get("issues", [])
+        issues = result.get("issues") or []
         highlighted_html = make_highlighted_html(design_text, issues)
         result["design_ocr_highlighted_html"] = highlighted_html
 
