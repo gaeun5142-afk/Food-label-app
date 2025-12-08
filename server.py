@@ -735,44 +735,43 @@ def verify_design():
             response = model.generate_content(parts)
             result_text = response.text.strip()
 
-            # JSON 추출
-            try:
-                json_match = re.search(r"(\{.*\})", result_text, re.DOTALL)
+           # ✅ ✅ ✅ JSON 안전 파싱 (502 방지)
+try:
+    json_match = re.search(r"(\{.*\})", result_text, re.DOTALL)
 
-                if json_match:
-                    clean_json = json_match.group(1)
-               else:
-                    clean_json = result_text.replace("```", "").strip()
+    if json_match:
+        clean_json = json_match.group(1)
+    else:
+        clean_json = result_text.replace("```", "").strip()
 
     # 흔한 마지막 쉼표 오류 보정
-             clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
+    clean_json = clean_json.replace(",\n}", "\n}").replace(",\n]", "\n]")
 
-             result = json.loads(clean_json)
+    result = json.loads(clean_json)
 
-        except Exception as e:
-            print("❌ JSON 파싱 완전 실패:", e)
-            print("❌ Gemini 원본 응답:", result_text[:2000])
-            return jsonify({
-                "error": "AI 응답(JSON) 파싱에 실패했습니다.",
-                "raw_ai_text": result_text[:1000]
-            }), 500
-            # 🔴 여기서 하이라이트 HTML 생성해서 result에 추가
-            design_text = result.get("design_ocr_text", "")
-            issues = result.get("issues", [])
-            highlighted_html = make_highlighted_html(design_text, issues)
-            result["design_ocr_highlighted_html"] = highlighted_html
+    # ✅ ✅ ✅ [여기서 바로 위반 상세 HTML 제거]
+    if "law_compliance" in result:
+        result["law_compliance"]["violations"] = []
 
-            return jsonify(result)
-            if "law_compliance" in result:
-                result["law_compliance"]["violations"] = []
+    # ✅ ✅ ✅ 하이라이트 HTML 생성
+    design_text = result.get("design_ocr_text", "")
+    issues = result.get("issues", [])
+    highlighted_html = make_highlighted_html(design_text, issues)
+    result["design_ocr_highlighted_html"] = highlighted_html
 
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            print("❌ Gemini 호출/파싱 중 오류:", e)
-            return jsonify({
-                "error": f"AI 분석 중 오류가 발생했습니다: {str(e)}"
-            }), 500
+    return jsonify(result)
+
+except Exception as e:
+    import traceback
+    traceback.print_exc()
+    print("❌ JSON 파싱 또는 후처리 실패:", e)
+    print("❌ Gemini 원본 응답:", result_text[:2000])
+
+    return jsonify({
+        "error": "AI 응답(JSON) 파싱에 실패했습니다.",
+        "raw_ai_text": result_text[:1000]
+    }), 500
+
 
     except Exception as e:
         # 위에서 예상 못 한 모든 예외는 여기로
