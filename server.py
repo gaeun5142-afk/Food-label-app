@@ -615,6 +615,8 @@ def create_standard():
     # 2. 원재료 이미지들 (여러 개)
     raw_images = request.files.getlist('raw_images')
 
+    test_text = request.form.get("test_text")
+
     if not excel_file:
         return jsonify({"error": "배합비 엑셀 파일이 필요합니다."}), 400
 
