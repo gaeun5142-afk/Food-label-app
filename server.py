@@ -731,27 +731,31 @@ def download_standard_excel():
 @app.route('/api/verify-design-strict', methods=['POST'])
 def verify_design_strict():
     try:
+        # ✅ 입력값 받기
         design_file = request.files.get("design_file")
-        design_text_from_user = request.form.get("design_text")  # ✅ 복붙 텍스트
+        design_text_from_user = request.form.get("design_text")  # ✅ 사용자가 복붙한 텍스트
         standard_json = request.form.get("standard_data")
 
         if not standard_json:
             return jsonify({"error": "기준 JSON이 필요합니다."}), 400
 
-        # ✅ 디자인 파일 OR 복붙 텍스트 중 하나는 반드시 필요
+        # ✅ 디자인 파일 또는 텍스트 중 하나는 반드시 필요
         if not design_file and not design_text_from_user:
             return jsonify({"error": "디자인 파일 또는 디자인 텍스트가 필요합니다."}), 400
 
         standard = json.loads(standard_json)
 
-        # ✅ ✅ ✅ OCR or 텍스트 분기 처리
-        if design_text_from_user:
+        # ✅ ✅ ✅ 핵심 분기
+        # ✅ 1) 텍스트가 있으면 → OCR 절대 안 함
+        # ✅ 2) 텍스트가 없고 파일만 있으면 → OCR 실행
+        if design_text_from_user and design_text_from_user.strip():
             design_text = design_text_from_user
-            print("📌 디자인 텍스트: 사용자 직접 입력 사용")
+            print("✅ [VERIFY] 사용자 입력 텍스트 기반으로 분석 수행")
         else:
             design_text = extract_raw_text_strict(design_file)
-            print("📌 디자인 텍스트: OCR 결과 사용")
+            print("✅ [VERIFY] OCR 기반으로 분석 수행")
 
+        # ✅ ✅ ✅ 여기부터는 “PDF 넣었을 때랑 완전히 동일한 분석 로직”
         issues = []
         score = 100
 
@@ -771,7 +775,7 @@ def verify_design_strict():
                     "suggestion": "디자인 원재료 텍스트를 기준 데이터와 동일하게 수정"
                 })
 
-        # ✅ 3. 영양 hookup 그대로 유지
+        # ✅ 3. 영양정보 숫자 검증
         if "nutrition_info" in standard:
             nut = standard["nutrition_info"].get("per_100g", {})
             for k, v in nut.items():
@@ -788,7 +792,7 @@ def verify_design_strict():
                             "suggestion": "영양성분 수치 수정"
                         })
 
-        # ✅ 4. 알레르기
+        # ✅ 4. 알레르기 문구 검증
         if "allergens" in standard and "manufacturing_facility" in standard["allergens"]:
             std_all = standard["allergens"]["manufacturing_facility"]
             if normalize_strict_keep_space(std_all) not in normalize_strict_keep_space(design_text):
@@ -802,7 +806,7 @@ def verify_design_strict():
                     "suggestion": "알레르기 문구를 법정 문구와 동일하게 수정"
                 })
 
-        # ✅ 5. 법정 필수 문구
+        # ✅ 5. 법정 필수 문구 검증
         mandatory_rules = {
             "소비기한": "식품등의 표시기준 제8조",
             "1399": "식품위생법 제13조"
@@ -826,8 +830,10 @@ def verify_design_strict():
         if score < 0:
             score = 0
 
+        # ✅ ✅ ✅ ✅ ✅
+        # ✅ ✅ ✅ 결과 JSON 형식 = PDF 넣었을 때랑 완전 동일 ✅ ✅ ✅
         return jsonify({
-            "design_ocr_text": design_text,
+            "design_ocr_text": design_text,   # ✅ 텍스트든 OCR이든 동일하게 들어감
             "score": score,
             "issues": issues,
             "law_compliance": {
@@ -841,9 +847,6 @@ def verify_design_strict():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
-
-
-       
 
 
 # QA 자료 업로드 및 식품표시사항 작성 API
