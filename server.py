@@ -732,15 +732,25 @@ def download_standard_excel():
 def verify_design_strict():
     try:
         design_file = request.files.get("design_file")
+        design_text_from_user = request.form.get("design_text")  # ✅ 복붙 텍스트
         standard_json = request.form.get("standard_data")
 
-        if not design_file or not standard_json:
-            return jsonify({"error": "디자인 파일과 기준 JSON이 필요합니다."}), 400
+        if not standard_json:
+            return jsonify({"error": "기준 JSON이 필요합니다."}), 400
+
+        # ✅ 디자인 파일 OR 복붙 텍스트 중 하나는 반드시 필요
+        if not design_file and not design_text_from_user:
+            return jsonify({"error": "디자인 파일 또는 디자인 텍스트가 필요합니다."}), 400
 
         standard = json.loads(standard_json)
 
-        # ✅ 1. OCR (AI는 여기까지만)
-        design_text = extract_raw_text_strict(design_file)
+        # ✅ ✅ ✅ OCR or 텍스트 분기 처리
+        if design_text_from_user:
+            design_text = design_text_from_user
+            print("📌 디자인 텍스트: 사용자 직접 입력 사용")
+        else:
+            design_text = extract_raw_text_strict(design_file)
+            print("📌 디자인 텍스트: OCR 결과 사용")
 
         issues = []
         score = 100
@@ -761,7 +771,7 @@ def verify_design_strict():
                     "suggestion": "디자인 원재료 텍스트를 기준 데이터와 동일하게 수정"
                 })
 
-        # ✅ 3. 영양정보 숫자 검증
+        # ✅ 3. 영양 hookup 그대로 유지
         if "nutrition_info" in standard:
             nut = standard["nutrition_info"].get("per_100g", {})
             for k, v in nut.items():
@@ -778,7 +788,7 @@ def verify_design_strict():
                             "suggestion": "영양성분 수치 수정"
                         })
 
-        # ✅ 4. 알레르기 쉼표 포함 검증
+        # ✅ 4. 알레르기
         if "allergens" in standard and "manufacturing_facility" in standard["allergens"]:
             std_all = standard["allergens"]["manufacturing_facility"]
             if normalize_strict_keep_space(std_all) not in normalize_strict_keep_space(design_text):
@@ -792,7 +802,7 @@ def verify_design_strict():
                     "suggestion": "알레르기 문구를 법정 문구와 동일하게 수정"
                 })
 
-        # ✅ 5. 법정 필수 문구 검증 (소비기한, 1399)
+        # ✅ 5. 법정 필수 문구
         mandatory_rules = {
             "소비기한": "식품등의 표시기준 제8조",
             "1399": "식품위생법 제13조"
@@ -813,7 +823,6 @@ def verify_design_strict():
                     "suggestion": f"{word} 문구 추가"
                 })
 
-        # ✅ 6. 점수 보정
         if score < 0:
             score = 0
 
