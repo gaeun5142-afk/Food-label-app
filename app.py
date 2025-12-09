@@ -103,7 +103,7 @@ def show_main_app():
     # -----------------------------
     # 자동 변환 (QA → 기준 데이터 생성)
     # -----------------------------
-    elif menu == "자동 변환":
+        elif menu == "자동 변환":
         st.title("📄 자동 변환")
 
         uploaded_files = st.file_uploader(
@@ -112,17 +112,34 @@ def show_main_app():
             accept_multiple_files=True
         )
 
+        # ✅ ✅ ✅ 여기 핵심: 사용자가 직접 복붙하는 입력칸
+        pasted_text = st.text_area(
+            "📝 직접 입력 / 복붙용 텍스트",
+            height=220,
+            placeholder="여기에 사용자가 직접 식품 표시 내용을 복사해서 붙여넣을 수 있습니다."
+        )
+
         if st.button("결과 확인하기"):
-            if not uploaded_files:
-                st.error("파일을 업로드하세요.")
+            # ✅ 파일도 없고 텍스트도 없으면 차단
+            if not uploaded_files and not pasted_text.strip():
+                st.error("파일을 업로드하거나 텍스트를 직접 입력하세요.")
                 return
 
-            files = [("qa_files", (f.name, f.read(), f.type)) for f in uploaded_files]
+            files = []
+            if uploaded_files:
+                files.extend([
+                    ("qa_files", (f.name, f.read(), f.type)) for f in uploaded_files
+                ])
+
+            data = {}
+            if pasted_text.strip():
+                data["test_text"] = pasted_text
 
             with st.spinner("AI가 QA 자료를 분석 중입니다..."):
                 response = requests.post(
                     f"{FLASK_API_URL}/api/upload-qa",
-                    files=files,
+                    files=files if files else None,
+                    data=data,
                     timeout=600
                 )
 
@@ -134,6 +151,7 @@ def show_main_app():
             else:
                 st.error("서버 오류")
                 st.write(response.text)
+
 
     # -----------------------------
     # ✅ 오류 자동체크 (최종 정상)
