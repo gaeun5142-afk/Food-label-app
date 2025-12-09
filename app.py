@@ -185,37 +185,44 @@ def show_main_app():
     # -----------------------------
     # ✅ 오류 자동체크 (최종 정상)
     # -----------------------------
-    elif menu == "오류 자동체크":
+       elif menu == "오류 자동체크":
         st.title("🔍 오류 자동체크")
 
         standard_excel = st.file_uploader(
-            "📘 기준데이터 (선택)", type=["xlsx", "xls", "pdf"]
+            "📘 기준데이터 (필수)", type=["xlsx", "xls", "pdf"]
         )
 
         design_file = st.file_uploader(
-            "🖼️ 디자인 파일", type=["pdf", "jpg", "jpeg", "png"]
+            "🖼️ 디자인 파일 (PDF 또는 이미지)",
+            type=["pdf", "jpg", "jpeg", "png"]
+        )
+
+        # ✅ ✅ ✅ 여기 핵심: 디자인 대신 복붙 텍스트 입력 가능
+        pasted_design_text = st.text_area(
+            "📝 디자인 텍스트 직접 입력 / 복붙 (디자인 파일 대신 사용 가능)",
+            height=220,
+            placeholder="디자인 파일을 업로드하지 않은 경우, 여기에 디자인 문구를 그대로 복사해서 붙여넣으세요."
         )
 
         if st.button("결과 확인하기"):
 
-            # ✅ 기준 데이터 없으면 차단
-            if "standard_result" not in st.session_state:
-                st.error("⚠️ 먼저 [자동 변환]에서 기준 데이터를 생성하세요.")
+            # ✅ 1단계: 기준 데이터 필수
+            if not standard_excel and "standard_result" not in st.session_state:
+                st.error("⚠️ 기준 데이터가 없습니다. 먼저 [자동 변환]에서 기준 데이터를 생성하세요.")
                 return
 
-            # ✅ 디자인 파일 없으면 차단
-            if not design_file:
-                st.error("디자인 파일을 업로드하세요.")
+            # ✅ 2단계: 디자인 파일 또는 텍스트 중 하나는 반드시 필요
+            has_file = design_file is not None
+            has_text = pasted_design_text.strip() != ""
+
+            if not has_file and not has_text:
+                st.error("⚠️ 디자인 파일 또는 디자인 텍스트 중 하나는 반드시 입력해야 합니다.")
                 return
 
-            files = {
-                "design_file": (
-                    design_file.name,
-                    design_file.read(),
-                    design_file.type,
-                )
-            }
+            files = {}
+            data = {}
 
+            # ✅ 기준 엑셀 파일
             if standard_excel:
                 files["standard_excel"] = (
                     standard_excel.name,
@@ -223,16 +230,29 @@ def show_main_app():
                     standard_excel.type,
                 )
 
+            # ✅ 디자인 파일
+            if has_file:
+                files["design_file"] = (
+                    design_file.name,
+                    design_file.read(),
+                    design_file.type,
+                )
+
+            # ✅ 디자인 텍스트
+            if has_text:
+                data["design_text"] = pasted_design_text
+
+            # ✅ 기준 데이터(JSON)
+            data["standard_data"] = json.dumps(
+                st.session_state.get("standard_result", {}),
+                ensure_ascii=False
+            )
+
             with st.spinner("디자인과 기준 데이터를 비교 중입니다..."):
                 response = requests.post(
                     f"{FLASK_API_URL}/api/verify-design-strict",
-                    files=files,
-                    data={
-                        "standard_data": json.dumps(
-                            st.session_state["standard_result"],
-                            ensure_ascii=False
-                        )
-                    },
+                    files=files if files else None,
+                    data=data,
                     timeout=600,
                 )
 
