@@ -103,42 +103,70 @@ def show_main_app():
     # -----------------------------
     # 자동 변환 (QA → 기준 데이터 생성)
     # -----------------------------
-        elif menu == "자동 변환":
+            elif menu == "자동 변환":
         st.title("📄 자동 변환")
 
-        uploaded_files = st.file_uploader(
-            "QA 파일 업로드",
-            type=["pdf", "jpg", "jpeg", "png", "xlsx", "xls"],
+        # ✅ PDF는 반드시 필수
+        uploaded_pdf = st.file_uploader(
+            "📕 QA PDF 파일 업로드 (필수)",
+            type=["pdf"],
+            accept_multiple_files=False
+        )
+
+        # ✅ 이미지 (선택)
+        uploaded_images = st.file_uploader(
+            "🖼️ QA 이미지 업로드 (선택)",
+            type=["jpg", "jpeg", "png"],
             accept_multiple_files=True
         )
 
-        # ✅ ✅ ✅ 여기 핵심: 사용자가 직접 복붙하는 입력칸
+        # ✅ 텍스트 직접 입력 (선택)
         pasted_text = st.text_area(
-            "📝 직접 입력 / 복붙용 텍스트",
+            "📝 직접 입력 / 복붙용 텍스트 (선택)",
             height=220,
-            placeholder="여기에 사용자가 직접 식품 표시 내용을 복사해서 붙여넣을 수 있습니다."
+            placeholder="이미지를 업로드하지 않으면, 여기에 텍스트를 반드시 입력해야 합니다."
         )
 
         if st.button("결과 확인하기"):
-            # ✅ 파일도 없고 텍스트도 없으면 차단
-            if not uploaded_files and not pasted_text.strip():
-                st.error("파일을 업로드하거나 텍스트를 직접 입력하세요.")
+
+            # ✅ 1단계: PDF 필수 체크
+            if not uploaded_pdf:
+                st.error("⚠️ PDF 파일은 반드시 업로드해야 합니다.")
+                return
+
+            # ✅ 2단계: 이미지 또는 텍스트 중 하나는 반드시 있어야 함
+            has_image = uploaded_images is not None and len(uploaded_images) > 0
+            has_text = pasted_text.strip() != ""
+
+            if not has_image and not has_text:
+                st.error("⚠️ 이미지 업로드 또는 텍스트 입력 중 하나는 반드시 필요합니다.")
                 return
 
             files = []
-            if uploaded_files:
+
+            # ✅ PDF 첨부 (필수)
+            files.append((
+                "qa_files",
+                (uploaded_pdf.name, uploaded_pdf.read(), uploaded_pdf.type)
+            ))
+
+            # ✅ 이미지 첨부 (선택)
+            if has_image:
                 files.extend([
-                    ("qa_files", (f.name, f.read(), f.type)) for f in uploaded_files
+                    ("qa_files", (img.name, img.read(), img.type))
+                    for img in uploaded_images
                 ])
 
             data = {}
-            if pasted_text.strip():
+
+            # ✅ 텍스트 전달 (선택)
+            if has_text:
                 data["test_text"] = pasted_text
 
             with st.spinner("AI가 QA 자료를 분석 중입니다..."):
                 response = requests.post(
                     f"{FLASK_API_URL}/api/upload-qa",
-                    files=files if files else None,
+                    files=files,
                     data=data,
                     timeout=600
                 )
@@ -151,6 +179,7 @@ def show_main_app():
             else:
                 st.error("서버 오류")
                 st.write(response.text)
+
 
 
     # -----------------------------
