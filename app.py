@@ -171,34 +171,37 @@ def show_main_app():
 
         if st.button("결과 확인하기"):
 
-            # ✅✅✅ 기준 데이터 없으면 서버 요청 자체 차단
-            if "standard_result" not in st.session_state:
-                st.error("⚠️ 먼저 [자동 변환]에서 기준 데이터를 생성해야 합니다.")
-                return
+    # ✅ 1️⃣ 기준 데이터 없으면 차단
+    if "standard_result" not in st.session_state or not st.session_state.get("standard_result"):
+        st.error("⚠️ 먼저 [자동 변환]에서 기준 데이터를 생성해야 합니다.")
+        return
 
-            if not design_file:
-                st.error("디자인 파일을 업로드하세요.")
-                return
+    # ✅ 2️⃣ 디자인 파일 없으면 차단
+    if not design_file:
+        st.error("디자인 파일을 업로드하세요.")
+        return
 
-            files = {
-                 "design_file": (
-                    design_file.name,
-                    design_file.read(),
-                    design_file.type,
-              )
-         }
+    # ✅ 3️⃣ 파일 구성
+    files = {
+        "design_file": (
+            design_file.name,
+            design_file.read(),
+            design_file.type,
+        )
+    }
 
-        if standard_excel:
-            files["standard_excel"] = (
-                standard_excel.name,
-                standard_excel.read(),
-                standard_excel.type,
-           )
+    if standard_excel:
+        files["standard_excel"] = (
+            standard_excel.name,
+            standard_excel.read(),
+            standard_excel.type,
+        )
 
+    # ✅ 4️⃣ 서버 요청
     with st.spinner("디자인과 기준 데이터를 비교 중입니다..."):
         try:
             response = requests.post(
-                f"{FLASK_API_URL}/api/verify-design",
+                f"{FLASK_API_URL}/api/verify-design-strict",  # ✅ 반드시 -strict
                 files=files,
                 data={
                     "standard_data": json.dumps(
@@ -208,6 +211,47 @@ def show_main_app():
                 },
                 timeout=600,
             )
+
+        except Exception as e:
+            st.error(f"서버 연결 오류: {e}")
+            return
+
+        # ✅ 5️⃣ 결과 처리
+        if response.status_code == 200:
+            st.success("검사 완료!")
+            result = response.json()
+
+            st.subheader("📌 총점 및 법규 준수 여부")
+            score = result.get("score", "N/A")
+            law = result.get("law_compliance", {})
+            st.write(f"**점수:** {score}")
+            st.write("**법규 상태:**", law.get("status", "N/A"))
+
+            if law.get("violations"):
+                for v in law["violations"]:
+                    st.write("-", v)
+
+            st.subheader("📌 상세 이슈 목록")
+            issues = result.get("issues", [])
+            if not issues:
+                st.write("발견된 이슈가 없습니다. 👍")
+            else:
+                for i, issue in enumerate(issues, start=1):
+                    st.markdown(f"#### 이슈 {i}")
+                    st.write("유형:", issue.get("type"))
+                    st.write("위치:", issue.get("location"))
+                    st.write("설명:", issue.get("issue"))
+                    st.write("기준값:", issue.get("expected"))
+                    st.write("디자인 실제값:", issue.get("actual"))
+                    st.write("수정 제안:", issue.get("suggestion"))
+                    st.markdown("---")
+
+        else:
+            st.error("서버에서 오류가 발생했습니다.")
+            st.write("상태 코드:", response.status_code)
+            st.write(response.text)
+
+
 
 
 
